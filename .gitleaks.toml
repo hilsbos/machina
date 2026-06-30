@@ -1,0 +1,14 @@
+# gitleaks configuration
+# Extends the default ruleset; allowlists known-fake fixtures used in unit tests.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fake token fixtures in the docker-command redaction unit test (these strings exist only to verify that secrets get redacted)."
+paths = [
+  '''fritz-orchestrator/daemon/src/agents/agents\.test\.ts''',
+]
+regexes = [
+  '''ghp_abcdef123456''',
+  '''sk-ant-(api03-xyz789|oat01-long-token-here)''',
+]

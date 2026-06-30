@@ -1,0 +1,100 @@
+name: Build Daemon Image
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      image_tag:
+        description: 'The SHA-based image tag that was built'
+        value: ${{ jobs.build-and-push.outputs.image_tag }}
+
+env:
+  REGISTRY: ghcr.io
+  DAEMON_IMAGE_NAME: your-org/fritz-daemon
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_tag: ${{ steps.build-meta.outputs.deploy_tag }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate build metadata
+        id: build-meta
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+
+          # deploy_tag must match a tag that docker/metadata-action actually
+          # pushes (see meta-daemon step below: type=sha,prefix=sha-). Deploy
+          # workflows consume needs.build.outputs.image_tag to pull the exact
+          # image that was just built — never 'latest', which is mutable.
+          echo "deploy_tag=sha-${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+          # version is a human-readable string baked into /app/.build-version
+          # via FRITZ_BUILD_VERSION, shown in the dashboard footer and used by
+          # deploy-hetzner.yml's Verify step to confirm the running container
+          # matches the built commit. Always includes the short SHA so the
+          # verify substring match works uniformly across branches and releases.
+          if [ "${{ github.event_name }}" == "release" ]; then
+            VERSION="${{ github.event.release.tag_name }}-${SHORT_SHA}"
+          else
+            REF_NAME="${GITHUB_REF_NAME:-main}"
+            BRANCH=$(echo "$REF_NAME" | sed 's/\//-/g')
+            VERSION="${BRANCH}-${SHORT_SHA}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Extract metadata for daemon
+        id: meta-daemon
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.DAEMON_IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern=v{{version}}
+            type=semver,pattern=v{{major}}.{{minor}}
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push daemon image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./fritz-orchestrator
+          file: ./fritz-orchestrator/Dockerfile
+          push: true
+          tags: ${{ steps.meta-daemon.outputs.tags }}
+          labels: ${{ steps.meta-daemon.outputs.labels }}
+          build-args: |
+            FRITZ_BUILD_VERSION=${{ steps.build-meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          echo "## Daemon Image Built and Pushed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta-daemon.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Deploy tag (immutable, SHA-based — use this to pull):" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ env.REGISTRY }}/${{ env.DAEMON_IMAGE_NAME }}:${{ steps.build-meta.outputs.deploy_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

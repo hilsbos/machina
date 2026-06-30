@@ -1,0 +1,184 @@
+# fritz.yaml - Centralized fritZ configuration
+# Location: fritz-orchestrator/config/fritz.yaml
+# Changes require daemon restart to take effect (except daemon.maxParallelAgents,
+# which is runtime-configurable via the dashboard)
+
+# Global defaults (apply to all agents unless overridden)
+defaults:
+  ttl: 1800              # Max wall-clock runtime in seconds (30m). Effective TTL = ttl × teams.ttlMultiplier.
+  chatTtl: 14400         # Chat-mode TTL base (4h base → 8h effective). Used when an agent is booted with -chat.
+  model: claude-sonnet-4-6 # Default model — Sonnet for most roles (cost savings)
+
+# Orchestrator configuration (persistent process, no TTL)
+orchestrator:
+  model: claude-opus-4-8
+
+# Claude Code behavior (applied to all agents and orchestrator)
+claude:
+  claudeSkipPermissions: true        # Skip permission prompts (required for autonomous operation)
+  claudePrintMode: true              # Use --print mode for cleaner output
+
+# Daemon-level operational limits
+daemon:
+  maxParallelAgents: 4               # Max concurrent agent containers
+  maxQueueSize: 10                   # Max queued messages per agent before rejection
+  persistDebounceMs: 1000            # Registry cache write debounce interval (ms)
+  agentMessageTimeoutMs: 180000      # Agent message execution timeout (ms)
+  startupReadinessTimeoutMs: 30000   # Persistent session startup readiness timeout (ms) — was 5s, see #630
+  watchdogIntervalSec: 60            # How often watchdog checks agent health (seconds)
+  workspaceMaxAgeHours: 24           # Delete old workspace directories after N hours (0 = disabled)
+  logArchiveMaxAgeDays: 0            # 0 = indefinite retention (no deletion); see GOTCHAS.md
+  cleanupArtifactGlobs:              # Build artifact directories to strip on agent exit (reclaims disk)
+    - target                         # Rust
+    - node_modules                   # Node.js
+    - build                          # Java/Gradle, generic
+    - .venv                          # Python
+
+  # Write Queue — Token-bucket rate limiter for GitHub mutations (Phase 2, issue #685)
+  # Routes all GitHub write operations through a queue to prevent secondary rate limit (429) errors.
+  # Feature-flagged: set enabled=false to bypass queue and execute writes synchronously.
+  #
+  # NOTE: Only `enabled` is read from config. All other values below are documentation-only —
+  # the live constants are in daemon/src/github/github-write-queue.ts. To tune the queue,
+  # update the constants there and redeploy.
+  writeQueue:
+    enabled: true                      # Feature flag: false bypasses queue entirely (writes are synchronous)
+    maxTokens: 10                      # [doc-only] Burst capacity — max tokens in the bucket
+    refillIntervalMs: 2000             # [doc-only] Token refill interval (1 token per interval; 2000ms = 30 writes/min)
+    operationTimeoutMs: 60000          # [doc-only] Drop queued operations older than this (ms)
+    maxQueueDepth:                     # [doc-only] Per-priority overflow limits (reject enqueue when full)
+      critical: 20                     # [doc-only] Merge, close, issue create — bypasses token bucket entirely
+      high: 50                         # [doc-only] Label transitions (most frequent mutation)
+      normal: 40                       # [doc-only] Comments
+      low: 20                          # [doc-only] Best-effort cleanup
+  deployWorkflow: build-and-deploy-hetzner.yml  # GitHub Actions workflow to trigger on redeploy
+  staleDeploymentReminderDays: 3  # Days before stale deployment reminder fires via Telegram (critical level)
+
+# Telegram UX tuning
+telegram:
+  chatFeedbackEnabled: true          # Enable typing indicators and progress updates
+  typingIndicatorIntervalMs: 4000    # Interval for typing indicator updates (ms) — under Telegram's 5s expiry for overlap
+  progressUpdateIntervalMs: 30000    # Interval for progress update messages (ms)
+  timeoutWarningThreshold: 0.8       # Warn user at this fraction of agent timeout (0-1)
+  editInPlaceEnabled: true           # Edit single message instead of sending new ones
+  editMinIntervalMs: 5000            # Minimum ms between message edits (rate limit protection)
+  notificationMode: essential         # Notification verbosity: essential | quiet | compact | verbose
+                                     #   essential: Only questions and problems (blocked, failed) and direct agent replies
+                                     #   quiet:     Only warnings and errors (blocked, failed, timeout)
+                                     #   compact:   One message per agent, updated in-place
+                                     #   verbose:   Every event gets a new message
+  # Topic thread IDs for role-specific topics in a supergroup
+  # Uncomment and set values to route messages to specific threads:
+  # topics:
+  #   define: 123         # Design/planning (define, ux, architect, budget)
+  #   implement: 124       # Implementation progress
+  #   review: 125          # Code review updates
+  #   validate: 126        # Testing/validation results
+  #   questions: 127       # Questions, blocks, errors, timeouts
+  #   retro: 128           # Team retrospectives
+
+# GitHub issue comment tuning — controls which comments are posted to issues
+github:
+  commentLevel: essential              # Comment verbosity: essential | quiet | verbose
+                                       #   essential: Only critical events (blocked, rework escalation,
+                                       #              dependency cycles, conflicts, skill summaries)
+                                       #   quiet:     Essential + combined agent start/finish (edit-in-place)
+                                       #   verbose:   Every event gets a comment (current behavior)
+
+# Autoloop tuning — controls the auto-orchestration loop timing
+autoloop:
+  intervalSec: 60              # Check for work every 60s (was hardcoded 30s)
+  cleanupEveryNthCycle: 10     # Run fritz.depends-on cleanup every 10th cycle (~10 min)
+
+# Usage monitoring — auto-pause autoloop when Claude subscription usage is high
+# Queries the Anthropic OAuth API to check real-time utilization across all dimensions:
+#   - 5-hour rolling window
+#   - 7-day weekly quota
+#   - 7-day Opus-specific quota (if applicable)
+# Requires CLAUDE_CODE_OAUTH_TOKEN or ~/.claude/.credentials.json
+# Note: Long-lived OAuth tokens may get 403 on the usage API. If so, the monitor
+# automatically falls back to ~/.claude/.credentials.json (from `claude login`).
+usage:
+  enabled: true                    # Enable usage monitoring (disable to ignore subscription limits)
+  pauseThreshold: 80               # Pause autoloop when ANY dimension >= this % (0-100)
+  resumeThreshold: 75              # Resume only when ALL dimensions < this %
+  checkIntervalMinutes: 5          # How often to query the Anthropic API
+  allowP0: true                    # P0 issues bypass usage-pause (but not manual pause)
+
+# Dashboard (embedded web UI for monitoring agent activity)
+dashboard:
+  enabled: true                    # Enable dashboard at /dashboard (read-only, no auth on localhost)
+
+# Role-specific overrides
+# TTL values are wall-clock max runtime in seconds (effective = ttl × teams.ttlMultiplier).
+# Sized from observed runtime distribution (last 500 runs) at p99 × ~2 — kills the rare runaway,
+# leaves the legitimate tail alone. Roles without overrides inherit defaults.ttl above.
+roles:
+  implement:
+    ttl: 1500            # 25m base → 50m effective. p99 26m, mean 11m. Long-running test/build cycles.
+    model: claude-opus-4-8
+
+  review:
+    ttl: 900             # 15m base → 30m effective. p99 15m, mean 6m.
+
+  validate:
+    ttl: 900             # 15m base → 30m effective. p99 10m, mean 6m.
+
+  architect:
+    ttl: 3600            # 1h base → 2h effective. p99 50m, mean 16m. Thin sample (n=23) — extra headroom.
+    model: claude-opus-4-8
+
+  define:
+    ttl: 1200            # 20m base → 40m effective. p99 20m, mean 8m.
+    model: claude-opus-4-8
+
+  pentest:
+    ttl: 3600            # 1h base → 2h effective. No recent samples; generous for attack chaining.
+    model: claude-opus-4-8
+
+  # budget, retro: no entries — inherit both ttl and model from defaults (30m base / 1h effective, Sonnet).
+  # ux, security-review: model override only, ttl inherits from defaults.
+  ux:
+    model: claude-opus-4-8
+
+  security-review:
+    model: claude-opus-4-8
+
+# Scheduler — periodic task execution (creates GitHub issues on a schedule)
+# Disabled by default. Configure jobs and set enabled: true to activate.
+scheduler:
+  enabled: false                     # Master switch (default: false)
+  checkIntervalSec: 60              # How often to check for due jobs (seconds)
+  # jobs:                            # Uncomment and configure to define scheduled tasks
+  #   - id: weekly-retro             # Unique job identifier (lowercase, hyphens only)
+  #     role: retro                  # Agent role to invoke
+  #     frequency: weekly            # hourly | daily | weekly
+  #     dayOfWeek: 5                 # 0=Sun..6=Sat (required for weekly)
+  #     hour: 9                      # Hour in UTC (0-23)
+  #     minute: 0                    # Minute (0-59, default 0)
+  #     enabled: true                # Toggle individual jobs
+  #     issueTitle: "Weekly Retrospective"
+  #     issueLabels:                 # Optional extra labels
+  #       - fritz.auto-pipeline
+  #     issueBody: "Run weekly team retro analysis."
+  #   - id: nightly-security
+  #     role: security-review
+  #     frequency: daily
+  #     hour: 2
+  #     enabled: true
+  #     issueTitle: "Nightly Security Scan"
+
+# Per-repo overrides (optional — default: deployment-tracker enabled for all repos)
+# Set deployment-tracker: false to skip deployment tracking for repos that auto-deploy via CI.
+# repos:
+#   your-org/fritzbridge:
+#     deployment-tracker: false  # Auto-deploys via CI, no tracker needed
+#   your-org/fritzmonitor:
+#     deployment-tracker: false  # Auto-deploys via CI
+
+# Agent Teams — persistent interactive sessions (universal for all agents)
+# All agents use persistent mode (stdin/stdout NDJSON). One-shot is automatic fallback only.
+# CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 is injected for all agents; actual teammate
+# spawning is controlled by skill file instructions.
+teams:
+  ttlMultiplier: 2.0               # TTL multiplier applied to all agents (set to 1.0 to disable)

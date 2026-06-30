@@ -1,0 +1,131 @@
+# Production docker-compose - uses pre-built images from GitHub Container Registry
+# Usage: docker-compose -f docker-compose.prod.yml up -d
+#
+# Daemon image is built by .github/workflows/build-daemon.yml (runs on v* tags)
+# Agent images are built by .github/workflows/build-agent-images.yml (manual dispatch)
+#
+# Pre-pull agent images:
+#   docker pull ghcr.io/your-org/fritz-agent:latest
+#   docker pull ghcr.io/your-org/fritz-agent-java:latest
+#   docker pull ghcr.io/your-org/fritz-agent-cpp:latest
+#   docker pull ghcr.io/your-org/fritz-agent-kali:latest
+
+services:
+  fritz-daemon:
+    # Use pre-built image from GitHub Container Registry
+    # Replace 'your-org/fritz' with your actual repository name
+    image: ghcr.io/${GITHUB_REPOSITORY:-your-org/fritz}-daemon:${IMAGE_TAG:-latest}
+    container_name: fritz-daemon
+    restart: unless-stopped
+
+    # Mount Docker socket to allow spawning agent containers
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .workspaces:/app/.workspaces
+      - ${HOME}/.claude:${HOME}/.claude
+
+    # Load environment variables from .env file
+    env_file:
+      - .env
+
+    # Environment variables from host (via .env file or system environment)
+    # NO SECRETS ARE IN THE IMAGE - only injected at runtime
+    environment:
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - GH_TOKEN=${GH_TOKEN:-}
+      - GITHUB_REPO=${GITHUB_REPO:-}
+      # Docker-in-Docker: Host path to workspaces for mounting in agent containers
+      # In production: /opt/fritz/fritz-orchestrator/.workspaces
+      - HOST_WORKSPACES_DIR=${PWD}/.workspaces
+      # Container registry for auto-pulling agent images (default: ghcr.io/your-org)
+      - GHCR_REGISTRY=${GHCR_REGISTRY:-}
+      # Host path to .claude directory for subscription auth
+      - HOST_CLAUDE_HOME=${HOST_CLAUDE_HOME:-${HOME}/.claude}
+      # Claude home directory for subscription tokens
+      # In production: /home/fritz
+      - HOME=${HOME}
+      # OpenTelemetry collector endpoint (enables agent telemetry when set)
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+
+    # Named network so agent containers can reach the daemon by hostname
+    networks:
+      - fritz
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # --- Dashboard Access (via edge-router on Tailscale) ---
+
+  nginx:
+    image: nginx:alpine
+    container_name: fritz-nginx
+    restart: unless-stopped
+    depends_on:
+      fritz-daemon:
+        condition: service_started
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/templates/default.conf.template:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    environment:
+      - FRITZ_DOMAIN=${FRITZ_DOMAIN:-fritz.example.com}
+    ports: []
+    networks:
+      - fritz
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  # fritzbridge — optional bridge to an external agent system
+  # Allows fritZ agents/daemon to communicate with external agents via HTTP
+  fritzbridge:
+    image: ghcr.io/your-org/fritzbridge:latest
+    container_name: fritzbridge
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock  # For fritZ orchestrator NDJSON + agent CLI exec
+      - ./fritzbridge-data:/app/data                # Audit logs + config persistence
+      - /tmp/heartbeat-metrics:/metrics             # Prometheus textfile collector
+    environment:
+      - PORT=9876
+      - FRITZ_DAEMON_URL=${FRITZ_DAEMON_URL:-http://fritz-daemon:3456}
+      - EXTERNAL_AGENT_GATEWAY_URL=${EXTERNAL_AGENT_GATEWAY_URL:-ws://external-agent-gateway:18789}
+      - EXTERNAL_AGENT_GATEWAY_TOKEN=${EXTERNAL_AGENT_GATEWAY_TOKEN}
+      - GH_TOKEN=${GH_TOKEN:-}
+      - BRIDGE_API_TOKEN=${BRIDGE_API_TOKEN}
+      - FRITZ_FORWARD_AGENT=${FRITZ_FORWARD_AGENT:-main}
+    networks:
+      - fritz
+      - external_agent_default
+      - monitoring
+    ports:
+      - "127.0.0.1:9876:9876"  # Host access for debugging
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9876/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  fritz:
+    name: fritz
+  external_agent_default:
+    external: true
+  monitoring:
+    external: true
+    name: fritzmonitor_fritzmonitor

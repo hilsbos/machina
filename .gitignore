@@ -1,0 +1,54 @@
+# Environment files (contain secrets)
+.env
+*.env
+!.env.example
+.claude/fritz/.env
+.claude/settings.local.json
+
+# Agent worktrees (build scratch, never publish)
+.claude/worktrees/
+
+# Runtime state
+.claude/fritz/pids/
+.claude/fritz/logs/
+.claude/fritz/state/
+.claude/fritz/state.json
+
+# Cache (runtime working memory)
+.claude/cache/task-*/
+.claude/cache/*.archived
+
+# Sessions (daily logs - can commit selectively for history)
+.claude/sessions/*.json
+
+# Learning system runtime
+.claude/learning/pending/
+.claude/learning/approved/
+.claude/learning/rejected/
+
+# Knowledge entries (generated, can be committed selectively)
+# .claude/knowledge/entries/
+
+# Agent workspaces
+.workspaces/
+workspaces/
+scratch/
+
+# Agent state files
+.claude/fritz/agents/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Node
+node_modules/
+/fritz-orchestrator/daemon/dist/
+/fritz-orchestrator/daemon/node_modules/

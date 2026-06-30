@@ -1,0 +1,11 @@
+node_modules
+.workspaces
+workspace
+.git
+.github
+*.md
+.env
+.env.*
+dist
+*.log
+.DS_Store

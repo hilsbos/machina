@@ -1,0 +1,18 @@
+FROM fritz-agent
+
+USER root
+
+# Rust C dependencies (build-essential, pkg-config, libssl-dev) + protoc for gRPC codegen
+RUN apt-get update && apt-get install -y \
+    build-essential pkg-config libssl-dev \
+    protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install rustup + stable toolchain as node user
+USER node
+ENV RUSTUP_HOME=/home/node/.rustup
+ENV CARGO_HOME=/home/node/.cargo
+ENV PATH="/home/node/.cargo/bin:${PATH}"
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable \
+    && rustup component add clippy rustfmt

@@ -1,0 +1,30 @@
+FROM node:20-slim
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    jq \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Claude Code CLI (native installer)
+# Installs to ~/.local/bin/claude, symlink to /usr/local/bin for all users
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+    && ln -sf "$(readlink -f /root/.local/bin/claude)" /usr/local/bin/claude
+
+# Install GitHub CLI
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+    && apt-get update && apt-get install -y gh \
+    && rm -rf /var/lib/apt/lists/*
+
+# Use existing node user from base image (UID 1000)
+RUN mkdir -p /workspace /home/node/.claude /home/node/.claude/debug /home/node/.claude/cache \
+    && chown -R node:node /workspace /home/node \
+    && chmod -R 755 /home/node/.claude
+
+USER node
+WORKDIR /workspace
+
+# No ENTRYPOINT - agents.ts always overrides with `--entrypoint sleep ... infinity`
+CMD ["sleep", "infinity"]

@@ -1,0 +1,86 @@
+FROM kalilinux/kali-rolling
+
+# --- fritZ agent prerequisites (replicated and extended from Dockerfile.agent) ---
+# Kali uses its own base image, so we must reinstall Node.js, Claude Code, and gh CLI.
+RUN apt-get update && apt-get install -y \
+    curl git jq ca-certificates gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node.js 20.x (Kali doesn't ship it by default)
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Claude Code CLI
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+    && ln -sf "$(readlink -f /root/.local/bin/claude)" /usr/local/bin/claude
+
+# GitHub CLI
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+    | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+    | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+    && apt-get update && apt-get install -y gh \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- Kali security tools ---
+# Individual tools only — metapackages (kali-tools-*) pull ~125+ tools and
+# blow past the ~14 GB disk limit on GitHub-hosted runners.  The pentest skill
+# checks `command -v` and adapts, so only tools actually referenced in SKILL.md
+# and used in real engagements are installed here.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    # Network / port scanning
+    nmap \
+    # Web enumeration
+    gobuster \
+    nuclei \
+    ffuf \
+    nikto \
+    wfuzz \
+    # Exploitation / injection
+    sqlmap \
+    hydra \
+    # TLS auditing
+    testssl.sh \
+    # DNS / OSINT
+    dnsutils \
+    whois \
+    amass \
+    # SMB / AD enumeration
+    netexec \
+    enum4linux-ng \
+    # CVE research
+    exploitdb \
+    # General utilities
+    openssl \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install paramspider from GitHub (canonical source — not reliably on PyPI)
+RUN pip3 install --break-system-packages git+https://github.com/devanshbatham/ParamSpider.git
+
+# Backward-compatibility symlinks (some references and docs use old names)
+RUN ln -sf /usr/bin/testssl /usr/bin/testssl.sh 2>/dev/null || true && \
+    ln -sf /usr/bin/netexec /usr/bin/crackmapexec 2>/dev/null || true
+
+# Verify critical tools are installed (fail build if missing)
+RUN echo "=== Verifying Kali tools ===" && \
+    for tool in nmap gobuster nuclei ffuf nikto sqlmap hydra \
+                amass testssl searchsploit netexec enum4linux-ng wfuzz paramspider; do \
+      command -v "$tool" >/dev/null 2>&1 && echo "[OK] $tool" || \
+        { echo "[FAIL] $tool not found"; exit 1; }; \
+    done && echo "=== All tools verified ==="
+
+# --- User setup (same pattern as fritz-agent) ---
+RUN useradd -m -s /bin/bash -u 1000 node 2>/dev/null || true \
+    && mkdir -p /workspace /home/node/.claude /home/node/.claude/debug \
+    /home/node/.claude/cache \
+    && chown -R node:node /workspace /home/node \
+    && chmod -R 755 /home/node/.claude
+
+USER node
+WORKDIR /workspace
+
+# No ENTRYPOINT - agents.ts always overrides with `--entrypoint sleep ... infinity`
+CMD ["sleep", "infinity"]

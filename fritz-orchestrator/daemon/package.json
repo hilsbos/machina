@@ -1,0 +1,38 @@
+{
+  "name": "fritz-daemon",
+  "version": "1.0.0",
+  "description": "fritZ agent orchestration daemon",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "watch": "tsx watch src/index.ts",
+    "pm2:start": "npm run build && pm2 start npm --name fritz-daemon -- start",
+    "pm2:restart": "npm run build && pm2 restart fritz-daemon",
+    "pm2:stop": "pm2 stop fritz-daemon",
+    "pm2:logs": "pm2 logs fritz-daemon",
+    "pm2:status": "pm2 status",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "telegraf": "^4.16.3",
+    "yaml": "^2.3.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@vitest/coverage-v8": "^4.0.18",
+    "eslint": "^10.0.2",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3",
+    "typescript-eslint": "^8.56.1",
+    "vitest": "^4.0.18"
+  }
+}
