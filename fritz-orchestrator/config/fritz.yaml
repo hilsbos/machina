@@ -51,7 +51,7 @@ daemon:
       high: 50                         # [doc-only] Label transitions (most frequent mutation)
       normal: 40                       # [doc-only] Comments
       low: 20                          # [doc-only] Best-effort cleanup
-  deployWorkflow: build-and-deploy-hetzner.yml  # GitHub Actions workflow to trigger on redeploy
+  deployWorkflow: build-and-deploy.yml  # GitHub Actions workflow to trigger on redeploy
   staleDeploymentReminderDays: 3  # Days before stale deployment reminder fires via Telegram (critical level)
 
 # Telegram UX tuning

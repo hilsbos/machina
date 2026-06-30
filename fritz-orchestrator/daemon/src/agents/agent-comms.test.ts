@@ -46,7 +46,7 @@ vi.mock('./fritz-config.js', () => ({
     watchdogIntervalSec: 60,
     workspaceMaxAgeHours: 24,
     logArchiveMaxAgeDays: 7,
-    deployWorkflow: 'build-and-deploy-hetzner.yml',
+    deployWorkflow: 'build-and-deploy.yml',
   } satisfies import('./fritz-config.js').DaemonConfig)),
 }));
 

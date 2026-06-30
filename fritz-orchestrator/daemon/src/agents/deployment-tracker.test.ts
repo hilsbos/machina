@@ -43,7 +43,7 @@ vi.mock('../github/github-cache.js', () => ({
 // Mock fritz-config to provide defaults without needing fritz.yaml
 vi.mock('./fritz-config.js', () => ({
   getDaemonConfig: vi.fn(() => ({
-    deployWorkflow: 'build-and-deploy-hetzner.yml',
+    deployWorkflow: 'build-and-deploy.yml',
     staleDeploymentReminderDays: 3,
   })),
   getRepoConfig: vi.fn(() => ({})),
@@ -356,7 +356,7 @@ describe('checkStaleDeploymentIssues', () => {
     mockGetRepoConfig.mockReturnValue({});
     mockGetAllRepoConfigs.mockReturnValue({});
     mockGetDaemonConfig.mockReturnValue({
-      deployWorkflow: 'build-and-deploy-hetzner.yml',
+      deployWorkflow: 'build-and-deploy.yml',
       staleDeploymentReminderDays: 3,
     } as any);
   });

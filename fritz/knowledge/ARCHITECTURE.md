@@ -557,7 +557,7 @@ The `/diagnose` command runs entirely within the daemon process (no containers s
 5. Checks config freshness (fritz.yaml on disk vs loaded)
 6. Collects active agent snapshots from registry
 7. Formats and sends report to Telegram with action buttons
-8. [Redeploy] button triggers gh workflow run build-and-deploy-hetzner.yml (with confirmation)
+8. [Redeploy] button triggers gh workflow run build-and-deploy.yml (with confirmation)
 9. [Details] button shows per-file verbose comparison
 ```
 

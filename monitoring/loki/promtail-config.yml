@@ -1,0 +1,60 @@
+server:
+  http_listen_port: 9080
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://fritzmonitor-loki:3100/loki/api/v1/push
+    backoff_config:
+      min_period: 500ms
+      max_period: 5m
+      max_retries: 10
+    batchsize: 1048576
+    batchwait: 1s
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 15s
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container_name'
+      # Example: collapse dynamic/ephemeral container names (e.g. myapp-worker-<id>)
+      # into a single label to avoid label-cardinality explosion. Adjust the regex
+      # to match your own naming scheme.
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/?myapp-worker-.*'
+        target_label: 'container_name'
+        replacement: 'myapp-worker'
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_project']
+        target_label: 'compose_project'
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: 'compose_service'
+    pipeline_stages:
+      - docker: {}
+      - json:
+          expressions:
+            level: level
+            component: component
+      - labels:
+          level:
+          component:
+      - timestamp:
+          source: ts
+          format: '2006-01-02T15:04:05.000Z'
+
+      # Example: derive a Prometheus counter from plaintext log lines.
+      # Uncomment and adapt the selector/match to your application's log format.
+      # - match:
+      #     selector: '{container_name=~"myapp.*"} |~ "some log event"'
+      #     stages:
+      #       - metrics:
+      #           myapp_log_event_total:
+      #             type: Counter
+      #             description: "Occurrences of a specific log event"
+      #             config:
+      #               match_all: true
+      #               action: inc
