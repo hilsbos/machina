@@ -231,7 +231,7 @@ Save `fritz.yaml` (creates backup first). Validates YAML structure and syntax be
 
 ### POST /api/dashboard/config/redeploy
 
-Trigger `build-and-deploy-hetzner.yml` GitHub Actions workflow.
+Trigger `build-and-deploy.yml` GitHub Actions workflow.
 
 ### POST /api/dashboard/config/restart
 

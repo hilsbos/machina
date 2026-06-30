@@ -1,0 +1,62 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    server: your-host
+
+# Alert rules
+rule_files:
+  - '/etc/prometheus/alerts/*.yml'
+
+# Alertmanager
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['fritzmonitor-alertmanager:9093']
+
+scrape_configs:
+  # --- Your application ---
+  # Example: scrape your app's /metrics endpoint once it exposes one.
+  # - job_name: 'my-app'
+  #   static_configs:
+  #     - targets: ['my-app:3456']
+  #   metrics_path: '/metrics'
+  #   scrape_interval: 15s
+
+  # --- Infrastructure ---
+  - job_name: 'node'
+    static_configs:
+      - targets: ['fritzmonitor-node-exporter:9100']
+    scrape_interval: 15s
+
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['fritzmonitor-cadvisor:8080']
+    scrape_interval: 15s
+    # cAdvisor exposes a LOT of metrics; keep only what we need
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'container_(cpu_usage_seconds_total|memory_usage_bytes|memory_working_set_bytes|network_receive_bytes_total|network_transmit_bytes_total|fs_usage_bytes|fs_limit_bytes|last_seen|start_time_seconds)'
+        action: keep
+
+  # --- Prometheus self-monitoring ---
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 30s
+
+  # --- Promtail log-derived metrics ---
+  # Counters extracted from application logs (see promtail-config.yml pipeline_stages)
+  - job_name: 'promtail'
+    static_configs:
+      - targets: ['fritzmonitor-promtail:9080']
+    scrape_interval: 15s
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'promtail_custom_(.*)'
+        target_label: __name__
+        replacement: '${1}'
+
+  # --- Textfile metrics (optional) ---
+  # node-exporter's textfile collector picks up *.prom files written to its
+  # collector dir; no separate scrape target needed (they appear in the 'node' job).

@@ -5,7 +5,7 @@
 fritZ is deployed as a Docker-based system via GitHub Actions CI/CD:
 
 - **Daemon + agents** run as Docker containers
-- **CI/CD**: `build-daemon.yml` + `build-agent-images.yml` build and push images to GHCR; `deploy-hetzner.yml` deploys via SSH; `build-and-deploy-hetzner.yml` combines build + deploy in one workflow
+- **CI/CD**: `build-daemon.yml` + `build-agent-images.yml` build and push images to GHCR; `deploy.yml` deploys via SSH; `build-and-deploy.yml` combines build + deploy in one workflow
 - **No manual git clone on server** -- the deploy workflow copies `docker-compose.prod.yml` and pulls pre-built images
 
 ```
@@ -17,7 +17,7 @@ build-daemon.yml / build-agent-images.yml
   - Pushes to ghcr.io/your-org/fritz-daemon, ghcr.io/your-org/fritz-agent
         |
         v
-deploy-hetzner.yml (manual trigger or called by build-and-deploy)
+deploy.yml (manual trigger or called by build-and-deploy)
   - SSHs into server as fritz
   - Copies docker-compose.prod.yml -> /opt/fritz/docker-compose.yml
   - Copies .env.example -> /opt/fritz/.env.example
@@ -36,13 +36,13 @@ deploy-hetzner.yml (manual trigger or called by build-and-deploy)
 - 2 vCPUs
 - 4 GB RAM
 - 20 GB storage
-- Cost: ~EUR 8-10/month (Hetzner CX22 or similar)
+- Cost: ~EUR 8-10/month (a small VPS (2 vCPU / 4 GB))
 
 **For Production:**
 - 4 vCPUs
 - 8 GB RAM
 - 40 GB storage
-- Cost: ~EUR 25/month (Hetzner CX32 or similar)
+- Cost: ~EUR 25/month (a larger VPS (4 vCPU / 8 GB))
 
 **Why these specs?**
 - Good CPU performance for running multiple Claude Code agents
@@ -200,7 +200,7 @@ git tag v1.0.0 && git push origin v1.0.0
 
 # Option B: Trigger workflows manually from GitHub Actions UI
 # 1. Run build-daemon.yml (and/or build-agent-images.yml)
-# 2. Run deploy-hetzner.yml
+# 2. Run deploy.yml
 
 # Verify deployment
 ssh fritz@<server-ip> 'cd /opt/fritz && docker compose ps'
@@ -212,7 +212,7 @@ ssh fritz@<server-ip> 'cd /opt/fritz && docker compose ps'
 
 ### build-daemon.yml
 
-**Triggers:** Manual dispatch, called by `build-and-deploy-hetzner.yml`
+**Triggers:** Manual dispatch, called by `build-and-deploy.yml`
 
 **What it does:**
 1. Builds the `fritz-daemon` Docker image
@@ -227,9 +227,9 @@ ssh fritz@<server-ip> 'cd /opt/fritz && docker compose ps'
 1. Builds `fritz-agent` Docker images (base, Java, C++ variants)
 2. Pushes to `ghcr.io/your-org/fritz-agent`, `ghcr.io/your-org/fritz-agent-java`, `ghcr.io/your-org/fritz-agent-cpp`
 
-### deploy-hetzner.yml
+### deploy.yml
 
-**Triggers:** Manual dispatch (with environment and optional `image_tag` input), called by `build-and-deploy-hetzner.yml`
+**Triggers:** Manual dispatch (with environment and optional `image_tag` input), called by `build-and-deploy.yml`
 
 **What it does:**
 1. SSHs into the production server as `$SSH_USER`
@@ -242,19 +242,19 @@ ssh fritz@<server-ip> 'cd /opt/fritz && docker compose ps'
 8. Verifies containers are running
 9. Cleans up old Docker images
 
-### build-and-deploy-hetzner.yml
+### build-and-deploy.yml
 
 **Triggers:** Release published, manual dispatch
 
 **What it does:**
 1. Calls `build-daemon.yml` to build and push the daemon image
-2. Calls `deploy-hetzner.yml` to deploy to the server
+2. Calls `deploy.yml` to deploy to the server
 
 ### How to Deploy
 
 1. **Create a release** on GitHub (or push a release tag)
-2. `build-and-deploy-hetzner.yml` triggers automatically on release publish — builds the daemon image and deploys
-3. Or trigger `build-daemon.yml` and `deploy-hetzner.yml` manually from the Actions tab
+2. `build-and-deploy.yml` triggers automatically on release publish — builds the daemon image and deploys
+3. Or trigger `build-daemon.yml` and `deploy.yml` manually from the Actions tab
 
 ---
 
@@ -376,7 +376,7 @@ find /opt/fritz/.workspaces/ -maxdepth 1 -type d -mtime +7 \
 Trigger the deploy workflow -- images are rebuilt automatically:
 
 1. Create a release on GitHub (or trigger workflows manually)
-2. `build-and-deploy-hetzner.yml` builds the daemon image and deploys
+2. `build-and-deploy.yml` builds the daemon image and deploys
 3. For agent images, run `build-agent-images.yml` separately when needed
 
 No manual `git pull` or `npm install` needed on the server.

@@ -58,8 +58,15 @@ fritz-orchestrator/   # Node.js orchestration daemon
 └── orchestrator/     # Orchestrator skill + knowledge
 fritz/
 └── knowledge/        # Shared agent knowledge base
+monitoring/           # Optional Prometheus/Grafana/Loki observability stack
 docs/                 # Architecture & evolution docs
 ```
+
+### Monitoring
+
+An optional observability stack (Prometheus, Grafana, Loki, Alertmanager) lives
+in [`monitoring/`](monitoring/README.md) — bring it up with
+`cd monitoring && docker compose up -d`.
 
 ## Contributing
 

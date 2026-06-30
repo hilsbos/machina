@@ -160,7 +160,7 @@ const DAEMON_DEFAULTS: DaemonConfig = {
   workspaceMaxAgeHours: 24,
   logArchiveMaxAgeDays: 7,
   cleanupArtifactGlobs: ['target', 'node_modules', 'build', '.venv'],
-  deployWorkflow: 'build-and-deploy-hetzner.yml',
+  deployWorkflow: 'build-and-deploy.yml',
   staleDeploymentReminderDays: 3,
   writeQueueEnabled: true,
 };

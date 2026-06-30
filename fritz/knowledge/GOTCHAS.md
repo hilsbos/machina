@@ -570,12 +570,12 @@ How fritZ can update and restart itself.
 To apply changes from the repo (knowledge, skills, daemon code):
 
 ```bash
-gh workflow run "build-and-deploy-hetzner.yml" --repo your-org/fritZ
+gh workflow run "build-and-deploy.yml" --repo your-org/fritZ
 ```
 
 This will:
 1. Build new Docker images
-2. Deploy to Hetzner server
+2. Deploy to your VPS provider server
 3. Restart fritZ daemon with latest changes
 
 ## When to Use
@@ -588,7 +588,7 @@ This will:
 ## Check Workflow Status
 
 ```bash
-gh run list --repo your-org/fritZ --workflow=build-and-deploy-hetzner.yml --limit 5
+gh run list --repo your-org/fritZ --workflow=build-and-deploy.yml --limit 5
 ```
 
 ## Issue Status Labels

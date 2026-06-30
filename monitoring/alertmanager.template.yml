@@ -1,0 +1,51 @@
+# Alertmanager configuration for your-host
+# Routes alerts to Telegram via Alertmanager's native telegram_configs
+#
+# Secrets are injected from .env at container startup.
+# Do NOT hardcode tokens here — edit .env instead.
+
+global:
+  resolve_timeout: 5m
+  telegram_api_url: 'https://api.telegram.org'
+
+route:
+  receiver: 'telegram'
+  group_by: ['platform', 'alertname']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+  routes:
+    # Critical alerts: repeat every 30 min until resolved
+    - match:
+        severity: critical
+      receiver: 'telegram'
+      repeat_interval: 30m
+
+    # Info alerts: only once per day
+    - match:
+        severity: info
+      receiver: 'telegram'
+      repeat_interval: 24h
+
+receivers:
+  - name: 'telegram'
+    telegram_configs:
+      - bot_token: '${TELEGRAM_BOT_TOKEN}'
+        chat_id: ${TELEGRAM_CHAT_ID}
+        parse_mode: 'HTML'
+        message: |
+          {{ if eq .Status "firing" }}🚨{{ else }}✅{{ end }} <b>{{ .Status | toUpper }}</b>
+          {{ range .Alerts }}
+          <b>{{ .Labels.alertname }}</b> ({{ .Labels.severity }})
+          {{ .Annotations.summary }}
+          {{ end }}
+        send_resolved: true
+
+# Inhibition rules: don't fire warnings if critical is already firing
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'platform']

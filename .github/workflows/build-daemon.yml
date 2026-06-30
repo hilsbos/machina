@@ -48,7 +48,7 @@ jobs:
 
           # version is a human-readable string baked into /app/.build-version
           # via FRITZ_BUILD_VERSION, shown in the dashboard footer and used by
-          # deploy-hetzner.yml's Verify step to confirm the running container
+          # deploy.yml's Verify step to confirm the running container
           # matches the built commit. Always includes the short SHA so the
           # verify substring match works uniformly across branches and releases.
           if [ "${{ github.event_name }}" == "release" ]; then
