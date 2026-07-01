@@ -1167,7 +1167,6 @@ describe('Background refresh timer lifecycle', () => {
 // ---------------------------------------------------------------------------
 
 describe('getRecentlyMerged', () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const mockExec = vi.mocked(exec) as unknown as ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
