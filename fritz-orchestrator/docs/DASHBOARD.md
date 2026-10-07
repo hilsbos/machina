@@ -1,12 +1,12 @@
-# fritZ Dashboard
+# machina Dashboard
 
-A web dashboard for monitoring and managing the fritZ orchestrator.
+A web dashboard for monitoring and managing the machina orchestrator. See the [orchestrator hub](../README.md) for the big picture.
 
 ## Quick Start
 
 The dashboard is **enabled by default**. Once the daemon is running, open:
 
-```
+```text
 http://localhost:3456/dashboard
 ```
 
@@ -14,19 +14,24 @@ No authentication is required on localhost.
 
 ## Features
 
-- **Active Agents** — live view of all running agent containers with role, issue, TTL progress, and last activity
-- **Workflow** (default tab) — pipeline funnel showing issue counts across all stages with human-gate indicators, agent-active pulse, and an attention panel surfacing only issues needing operator input, grouped by urgency (escalated → awaiting approval → blocked → stale) with inline [Approve], [Reject], [Boot], and [Reassign] actions
-- **Issues** — all open GitHub issues grouped by pipeline status, with inline status/priority management, dependency tracking, and stale issue indicators
-- **Usage** — token usage breakdown by role, issue, agent, and day
-- **History** — completed agent sessions with duration, token usage, exit status, and expandable execution logs
-- **Real-time updates** — Server-Sent Events push changes instantly (agent start/stop/update, issue label changes)
+| Feature | Description |
+|---------|-------------|
+| **Active Agents** | Live view of all running agent containers with role, issue, TTL progress, and last activity |
+| **Workflow** (default tab) | Pipeline funnel showing issue counts across all stages with human-gate indicators, agent-active pulse, and an attention panel surfacing only issues needing operator input, grouped by urgency (escalated → awaiting approval → blocked → stale) with inline `[Approve]`, `[Reject]`, `[Boot]`, and `[Reassign]` actions |
+| **Issues** | All open GitHub issues grouped by pipeline status, with inline status/priority management, dependency tracking, and stale issue indicators |
+| **Usage** | Token usage breakdown by role, issue, agent, and day |
+| **History** | Completed agent sessions with duration, token usage, exit status, and expandable execution logs |
+| **Real-time updates** | Server-Sent Events push changes instantly (agent start/stop/update, issue label changes) |
+
+<!-- screenshot: dashboard Workflow tab (pipeline funnel + attention panel) -->
+<!-- screenshot: dashboard Issues tab (grouped view) -->
 
 ## Workflow Tab
 
 The Workflow tab is the default landing tab and provides at-a-glance oversight of the issue pipeline.
 
 ### Pipeline Funnel
-A 12-stage funnel visualizing issue counts across the full pipeline (inbox → backlog → for-define → defined → for-implement → ... → accepted). Each stage shows:
+A 13-stage funnel visualizing issue counts across the full pipeline (`for-define` → `define` → `defined` → `for-implement` → `implement` → ... → `for-merge` → `for-human` → `for-rework`; see `WORKFLOW_PIPELINE_STAGES` in `dashboard.ts`). Each stage shows:
 - **Count** — number of issues currently in that stage
 - **Human gate indicator** (⏸) — stages that require operator approval (`defined`, `validated`)
 - **Warning indicator** (⚠) — `for-human` stage (escalated issues)
@@ -54,8 +59,11 @@ The Workflow tab updates automatically via SSE (`issues-update`, `agent-started`
 The Issues tab provides a centralized view of all open GitHub issues with inline management capabilities.
 
 ### Views
-- **Grouped view** (default) — issues grouped by `fritz.status:*` in pipeline order (inbox → backlog → for-define → ... → for-human). Empty groups are hidden. Groups are collapsible.
-- **Flat view** — single table with sort options (status, priority, newest, oldest, recently updated)
+
+| View | Behavior |
+|------|----------|
+| **Grouped view** (default) | Issues grouped by `fritz.status:*` in pipeline order (inbox → backlog → for-define → ... → for-human). Empty groups are hidden. Groups are collapsible. |
+| **Flat view** | Single table with sort options (status, priority, newest, oldest, recently updated) |
 
 ### Quick Actions
 - **Status change** — click the status badge on any issue to open a dropdown with valid statuses. Confirmation required. Changes the `fritz.status:*` label on GitHub.
@@ -140,69 +148,43 @@ The Settings tab includes a **Runtime Controls** section with the following cont
 | `usage-update` | System status | When usage monitor state changes (pause/resume/override) |
 | `system-update` | System status | When system settings change (e.g., max agents updated) |
 
-## Remote Access via mTLS
+## Remote Access
 
-For secure remote access, an nginx reverse proxy with mutual TLS is provided. Certificates are auto-generated on first boot.
+For remote access, the `nginx` reverse proxy (`fritz-nginx` container in `docker-compose.prod.yml`) terminates TLS in front of the daemon. There is **no** client-certificate / mutual-TLS auth — remote access is gated by TLS plus network isolation (the proxy is not published to the host; it is reached over Tailscale via your Tailscale edge router).
 
-### 1. Set environment variables
-
-In `.env`:
-
-```bash
-FRITZ_DOMAIN=your-server.example.com
-FRITZ_DASHBOARD_PORT=8443
-FRITZ_CLIENT_CERT_PASS=your-secure-password
-```
-
-### 2. Start the stack
+### Start the stack
 
 ```bash
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-The `mtls-init` container automatically generates CA, server, and client certificates on first boot. Subsequent boots skip generation if certs already exist.
+The nginx container mounts `nginx/nginx.conf` and the host's `/etc/letsencrypt` directory (read-only) for its TLS server certificate. `FRITZ_DOMAIN` (default `fritz.example.com`) sets the server name.
 
-### 3. Download the client certificate
+### Path restriction
 
-```bash
-scp user@your-server:/opt/fritz/mtls/certs/client.p12 ~/Downloads/
-```
+The proxy forwards only the dashboard surface — every other path returns `444` (connection closed), so the agent API is never exposed externally:
 
-Import `client.p12` into your browser or device (password: the value you set for `FRITZ_CLIENT_CERT_PASS`).
-
-### 4. Access
-
-```
-https://your-server.example.com:8443/dashboard
-```
-
-The proxy only exposes `/dashboard` and `/api/dashboard/*` — all other paths return 444 (connection closed).
-
-### Generated Certificates
-
-| File | Purpose | Lifetime |
-|---|---|---|
-| `ca.crt` / `ca.key` | Certificate Authority | 10 years |
-| `server.crt` / `server.key` | nginx TLS server cert (SAN: `FRITZ_DOMAIN`) | 825 days |
-| `client.crt` / `client.key` | Client authentication cert | 825 days |
-| `client.p12` | PKCS#12 bundle for browser import | 825 days |
-
-Certificates are stored in `mtls/certs/`. To regenerate, delete the directory and restart the stack.
+- `/dashboard` — dashboard SPA
+- `/api/dashboard/*` — dashboard API + SSE
+- `/system-map` — live topology visualization
 
 ### Security
 
-- TLS 1.3 only
+- TLS 1.3 only, server certificate only (no client-cert verification)
 - `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`
-- nginx `proxy_http_version 1.1` for proper SSE support
-- `X-SSL-Client-CN` header forwarded to daemon for audit logging
+- nginx `proxy_http_version 1.1` with buffering off for proper SSE support
 
 ## Architecture
 
-```
-Browser ──SSE──► nginx:443 (mTLS) ──► daemon:3456/api/dashboard/events
-                                       ├─ registry (live agents)
-                                       ├─ autoloop (workflow stage data)
-                                       └─ log-archive (history)
+```mermaid
+flowchart LR
+    browser[Browser] -->|SSE over TLS| nginx[nginx 443]
+    nginx --> daemon[daemon 3456]
+    subgraph Daemon
+        daemon --> registry[registry<br/>live agents]
+        daemon --> autoloop[autoloop<br/>workflow stages]
+        daemon --> archive[log-archive<br/>history]
+    end
 ```
 
 The dashboard is a single self-contained HTML file with inline CSS and JavaScript (no build tools, no npm dependencies). It uses Server-Sent Events for real-time updates and falls back to polling if SSE is unavailable.

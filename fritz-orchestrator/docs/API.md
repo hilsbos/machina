@@ -1,11 +1,21 @@
-# fritZ HTTP API Reference
+# machina HTTP API Reference
+
+HTTP API reference for the machina daemon. See the [orchestrator hub](../README.md) for the big picture and [SECURITY.md](SECURITY.md) for the network posture.
+
+## Contents
+
+- [Overview](#overview)
+- [Authentication](#authentication)
+- [Endpoint index](#endpoint-index)
+- [Agent endpoints](#agent-endpoints)
+- [Dashboard endpoints](#dashboard-endpoints)
 
 ## Overview
 
 The daemon runs an HTTP server on port 3456 (configurable via `API_PORT` in `.env`). Endpoints are split into two categories:
 
 - **Agent API** (`/api/*`) — Used by agents and the orchestrator, requires per-agent/orchestrator token
-- **Dashboard API** (`/api/dashboard/*`) — Used by the dashboard SPA, no auth required (protected by mTLS for remote access)
+- **Dashboard API** (`/api/dashboard/*`) — Used by the dashboard SPA, no auth required (protected by TLS and network isolation for remote access)
 
 ## Authentication
 
@@ -15,11 +25,60 @@ Agent endpoints require an `Authorization: Bearer <token>` header. Tokens are ge
 `validateCallerToken()` in `api.ts` accepts both agent tokens and the orchestrator token.
 
 ### Dashboard API
-Dashboard endpoints have no authentication on localhost. For remote access, nginx mTLS reverse proxy (`nginx-mtls` Docker sidecar) only forwards `/dashboard` and `/api/dashboard/*` paths — agent API endpoints are never exposed externally.
+Dashboard endpoints have no authentication on localhost.
 
----
+> [!CAUTION]
+> Remote access is protected by Let's Encrypt TLS plus Tailscale network isolation — there is **no** client-certificate / mutual-TLS auth. The nginx reverse proxy (`fritz-nginx`) forwards only `/dashboard` and `/api/dashboard/*`, returning 444 for every other path, so agent API endpoints are never exposed externally. The proxy is not published to the host.
 
-## Agent Endpoints
+## Endpoint index
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/notify` | Agent progress/completion notification |
+| `POST` | `/api/ask` | Agent asks a question and blocks until answered |
+| `GET` | `/api/archive` | List archived agents (filter + paginate) |
+| `GET` | `/api/archive/:name/summary` | `summary.json` for an archived agent |
+| `GET` | `/api/archive/:name/log` | `agent.log` for an archived agent |
+| `GET` | `/dashboard` | Serve the dashboard single-page app |
+| `GET` | `/api/dashboard/state` | Full state snapshot |
+| `GET` | `/api/dashboard/workflow` | Pipeline funnel + attention panel |
+| `GET` | `/api/dashboard/agents` | Active agents from registry |
+| `GET` | `/api/dashboard/agent-log/:name` | Live log for a running agent |
+| `GET` | `/api/dashboard/issue-trail/:issue` | Agent trail for one issue |
+| `GET` | `/api/dashboard/history` | Paginated execution history |
+| `GET` | `/api/dashboard/log/:name` | Archived log + summary metadata |
+| `GET` | `/api/dashboard/session-log/:name` | Parsed JSONL session timeline |
+| `GET` | `/api/dashboard/issues` | All open issues |
+| `GET` | `/api/dashboard/issues/:number` | Single issue detail |
+| `POST` | `/api/dashboard/issues/:number/label` | Add/remove whitelisted labels |
+| `POST` | `/api/dashboard/issues/:number/comment` | Post an issue comment |
+| `POST` | `/api/dashboard/agent/:name/stop` | Kill an active agent |
+| `POST` | `/api/dashboard/boot` | Boot a new agent for an issue |
+| `POST` | `/api/dashboard/autoloop/toggle` | Toggle autoloop pause/resume |
+| `GET` | `/api/dashboard/usage` | Aggregate token usage |
+| `GET` | `/api/dashboard/usage/breakdown` | Detailed usage breakdown |
+| `GET` | `/api/dashboard/subscription-usage` | Real-time subscription utilization |
+| `POST` | `/api/dashboard/subscription-usage/override` | Toggle usage override |
+| `POST` | `/api/dashboard/subscription-usage/reload` | Restart the usage monitor |
+| `GET` | `/api/dashboard/config` | Read `fritz.yaml` |
+| `POST` | `/api/dashboard/config` | Save `fritz.yaml` |
+| `POST` | `/api/dashboard/config/redeploy` | Trigger the deploy workflow |
+| `POST` | `/api/dashboard/config/restart` | Restart the daemon container |
+| `POST` | `/api/dashboard/config/commit` | Commit and push `fritz.yaml` |
+| `GET` | `/api/dashboard/env-info` | Env/runtime config (masked) |
+| `GET` | `/api/dashboard/event-log` | Recent structured events |
+| `GET` | `/api/dashboard/daemon-log` | Daemon stdout tail |
+| `GET` | `/api/dashboard/notification-mode` | Current Telegram notification mode |
+| `POST` | `/api/dashboard/notification-mode` | Set Telegram notification mode |
+| `GET` | `/api/dashboard/comment-level` | Current GitHub comment level |
+| `POST` | `/api/dashboard/comment-level` | Set GitHub comment level |
+| `GET` | `/api/dashboard/agents/max` | Current max parallel agents |
+| `POST` | `/api/dashboard/agents/max` | Set max parallel agents (1–20) |
+| `GET` | `/api/dashboard/retro` | Full retro metrics dataset |
+| `GET` | `/api/dashboard/retro/scans` | Scan history only |
+| `GET` | `/api/dashboard/events` | Server-Sent Events stream |
+
+## Agent endpoints
 
 ### POST /api/notify
 
@@ -32,7 +91,10 @@ Agent progress/completion notification. The primary communication channel from a
 | `message` | string | Yes | Notification message |
 | `outcome` | string | No | For `complete` type: `completed` (default) or `rejected` |
 
-Triggers: Telegram notification, GitHub issue comment, TTL reset.
+Triggers: Telegram notification, GitHub issue comment. Also records the agent's last-activity timestamp for display only.
+
+> [!NOTE]
+> The last-activity timestamp does not affect TTL. TTL is wall-clock from agent start and does not reset on activity (`registry.ts` `getExpiredAgents`).
 
 ### POST /api/ask
 
@@ -72,9 +134,7 @@ Get `agent.log` for a specific archived agent.
 |-------|------|-------------|
 | `lines` | number | Max lines to return (default: all) |
 
----
-
-## Dashboard Endpoints
+## Dashboard endpoints
 
 ### GET /dashboard
 
@@ -180,7 +240,10 @@ Boot a new agent for a queued issue.
 | `role` | string | Yes | Agent role |
 | `force` | boolean | No | Bypass parallel agent limit (manual boots only) |
 
-When `force: true` is used and the parallel limit is reached, the response includes a `warning` field:
+When `force: true` is used and the parallel limit is reached, the response includes a `warning` field.
+
+<details>
+<summary>Force-boot response body</summary>
 
 ```json
 {
@@ -188,6 +251,8 @@ When `force: true` is used and the parallel limit is reached, the response inclu
   "warning": "⚠️ Force-boot: bypassing parallel limit (currently N/N)"
 }
 ```
+
+</details>
 
 ### POST /api/dashboard/autoloop/toggle
 
@@ -231,7 +296,7 @@ Save `fritz.yaml` (creates backup first). Validates YAML structure and syntax be
 
 ### POST /api/dashboard/config/redeploy
 
-Trigger `build-and-deploy.yml` GitHub Actions workflow.
+Trigger the deploy GitHub Actions workflow (`build-and-deploy.yml`, configurable via `daemon.deployWorkflow` in `fritz.yaml`).
 
 ### POST /api/dashboard/config/restart
 
@@ -319,6 +384,6 @@ Server-Sent Events (SSE) stream for real-time updates. Event types: `agent-start
 
 ---
 
-_See also: [ARCHITECTURE.md](../../fritz/knowledge/ARCHITECTURE.md) for component design, [SECURITY.md](SECURITY.md) for security model details._
+_See also: [ARCHITECTURE.md](../../fritz/knowledge/ARCHITECTURE.md) for component design and [SECURITY.md](SECURITY.md) for security model details._
 
 _Last updated: 2026-02-27_

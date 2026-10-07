@@ -1,10 +1,12 @@
-# Telegram Bot Setup
+# machina Telegram Setup
+
+Teil des [machina Orchestrators](../README.md). Siehe [TELEGRAM_BOT.md](TELEGRAM_BOT.md) für die Befehlsreferenz.
 
 ## 1. Bot erstellen
 
 1. Öffne Telegram, suche **@BotFather**
 2. Sende `/newbot`
-3. Name: `fritZ` (oder was du willst)
+3. Name: `machina` (oder was du willst)
 4. Username: `fritz_agent_bot` (muss einzigartig sein)
 5. **Kopiere den Token** → sieht aus wie `123456789:ABCdefGHI...`
 
@@ -53,7 +55,7 @@ npm start
 ## 6. Testen
 
 In Telegram:
-```
+```text
 fritz hallo
 fritz status
 fritz help

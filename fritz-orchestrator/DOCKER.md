@@ -1,35 +1,31 @@
-# Docker
+# machina Container Architecture
 
 How the daemon, orchestrator, and agent containers are structured, and how volumes, credentials, and identity are isolated.
 
+Part of the [machina orchestrator](README.md) — see the orchestrator README for setup and usage.
+
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│  HOST MACHINE                                                │
-│                                                              │
-│  ~/.claude/                    .workspaces/                  │
-│  ├── .credentials.json         ├── fritz/           (orch)   │
-│  └── subscription_token.json   ├── implement-42-a1b2/(agent) │
-│                                ├── review-42-c3d4/  (agent)  │
-│                                └── architect-e5f6/  (agent)  │
-└──────────────┬───────────────────────────┬───────────────────┘
-               │                           │
-       ┌───────▼───────┐         ┌─────────▼─────────┐
-       │ fritz-daemon   │         │ fritz-agent-*      │
-       │ (docker-compose│ spawns  │ (docker run)       │
-       │  service)      ├────────►│                    │
-       │                │         │ One per task       │
-       └────────────────┘         └────────────────────┘
+```mermaid
+flowchart LR
+    subgraph host[Host Machine]
+        claude["~/.claude<br/>credentials"]
+        ws[".workspaces/<br/>orchestrator + agent dirs"]
+    end
+    daemon["fritz-daemon<br/>compose service"]
+    agent["fritz-agent-*<br/>one container per task"]
+    claude -.read.-> daemon
+    ws -.mount.-> daemon
+    daemon -->|spawns via docker run| agent
 ```
 
 - **Daemon**: Runs as a docker-compose service (production) or native Node.js process (local dev)
 - **Orchestrator**: Persistent Claude Code agent, runs inside its own Docker container
 - **Agents**: Spawned as **sibling containers** (not children) via the Docker socket
 
-## Volume Mounts
+## Volume mounts
 
-### Daemon Container (docker-compose.yml)
+### Daemon container (docker-compose.yml)
 
 | Host Path | Container Path | Purpose |
 |---|---|---|
@@ -37,71 +33,66 @@ How the daemon, orchestrator, and agent containers are structured, and how volum
 | `.workspaces/` | `/app/.workspaces` | Read/write agent workspace directories |
 | `${HOME}/.claude` | `${HOME}/.claude` | Source for credential copying (read by daemon) |
 
-### Orchestrator Container (fritz-orchestrator)
+### Orchestrator container (fritz-orchestrator)
 
 | Host Path | Container Path | Purpose |
 |---|---|---|
 | `.workspaces/fritz/` | `/workspace` | Orchestrator workspace (identity, state) |
 | `.workspaces/fritz/.claude/` | `/home/node/.claude` | Isolated `.claude` with copied credentials |
 
-### Agent Containers (fritz-agent-{name})
+### Agent containers (fritz-agent-{name})
 
 | Host Path | Container Path | Purpose |
 |---|---|---|
 | `.workspaces/{name}/` | `/workspace` | Agent workspace (identity, assignment, project) |
 | `.workspaces/{name}/.claude/` | `/home/node/.claude` | Isolated `.claude` with copied credentials |
 
-## .claude Directory Isolation
+## .claude directory isolation
 
-Each agent gets its **own** `.claude` directory. The host user's `~/.claude` is never mounted directly into any agent or orchestrator container.
+> [!CAUTION]
+> The host user's `~/.claude` is never mounted directly into any agent or orchestrator container. Each agent gets its **own** `.claude` directory with credentials copied in read-only.
 
-### Credential Flow
+### Credential flow
 
+```mermaid
+flowchart TD
+    host["Host ~/.claude<br/>source of truth"]
+    host -->|daemon reads at startup| daemon[daemon]
+    host -->|bootAgent copies| a1["implement-42-a1b2/.claude<br/>read-only 0444"]
+    host -->|bootAgent copies| a2["review-42-c3d4/.claude<br/>read-only 0444"]
+    host -->|orchestrator setup copies| orch["fritz/.claude<br/>read-only 0444"]
 ```
-Host ~/.claude/                          (source of truth)
-    │
-    ├──► daemon reads at startup
-    │
-    ├──► bootAgent() copies to ──► .workspaces/implement-42-a1b2/.claude/
-    │                                  ├── .credentials.json    (0444, read-only)
-    │                                  └── subscription_token.json (0444, read-only)
-    │
-    ├──► bootAgent() copies to ──► .workspaces/review-42-c3d4/.claude/
-    │                                  ├── .credentials.json
-    │                                  └── subscription_token.json
-    │
-    └──► orchestrator setup copies ──► .workspaces/fritz/.claude/
-                                       ├── .credentials.json
-                                       └── subscription_token.json
-```
+
+Each copied `.claude` contains `.credentials.json` and `subscription_token.json`.
 
 - Credentials are **copied**, not symlinked or bind-mounted
 - Copies are set to **read-only (0444)** to prevent agents from modifying them
 - Each agent has a completely independent `.claude` with no shared state
 - No session pollution between agents (important for `--continue` flag)
 
-### Why Not Share ~/.claude?
+### Why not share ~/.claude?
 
 Previously all agents shared `~/.claude`, which caused:
+
 1. **Session state pollution** — the orchestrator's `--continue` flag would pick up agent session history
 2. **Identity confusion** — Claude Code stores per-session state in `~/.claude`
 3. **Race conditions** — multiple agents writing to the same directory simultaneously
 
 Fixed in commit `f8998ef`.
 
-## Identity System
+## Identity system
 
-Identity is managed through `.fritz/`, completely separate from `.claude/`. The `.claude` directory is only for Claude Code internals (credentials, session state). Agent identity is handled by the fritZ boot system.
+Identity is managed through `.fritz/`, completely separate from `.claude/`. The `.claude` directory is only for Claude Code internals (credentials, session state). Agent identity is handled by the machina boot system.
 
-### Per-Agent Workspace Layout
+### Per-agent workspace layout
 
-```
+```text
 .workspaces/{name}/
 ├── CLAUDE.md                  # Auto-loaded by Claude Code; points to .fritz/
 ├── .claude/                   # Isolated Claude Code internals
 │   ├── .credentials.json      #   Auth credentials (read-only copy)
 │   └── subscription_token.json
-├── .fritz/                    # fritZ agent identity and state
+├── .fritz/                    # machina agent identity and state
 │   ├── identity.md            #   Role definition (from SKILL.md template)
 │   ├── assignment.md          #   Task details (from GitHub issue)
 │   ├── knowledge/             #   Shared team knowledge base (copied)
@@ -110,7 +101,7 @@ Identity is managed through `.fritz/`, completely separate from `.claude/`. The 
 └── project/                   # Cloned target repository
 ```
 
-### Identity Loading Sequence
+### Identity loading sequence
 
 1. Claude Code starts in `/workspace` and auto-loads `CLAUDE.md`
 2. `CLAUDE.md` instructs: "Read `.fritz/identity.md`"
@@ -118,43 +109,44 @@ Identity is managed through `.fritz/`, completely separate from `.claude/`. The 
 4. Agent reads `.fritz/assignment.md` (GitHub issue details, step-by-step instructions)
 5. Agent checks `.fritz/knowledge/` for shared patterns and decisions
 
-### Agent Naming and Uniqueness
+### Agent naming and uniqueness
 
 Each agent gets a unique name with a timestamp suffix for uniqueness:
+
 - **Issue agents:** `{role}-{issue}-{suffix}` (e.g., `implement-42-a1b2`, `review-42-c3d4`)
 - **Manual agents:** `{role}-{suffix}` (e.g., `architect-e5f6`)
 
 The suffix is the last 4 hex characters of the current timestamp, ensuring unique names across rework cycles and manual retries of the same issue.
 
 This name determines:
+
 - Workspace directory: `.workspaces/{name}/`
 - Container name: `fritz-agent-{name}`
 - Isolated `.claude` path: `.workspaces/{name}/.claude/`
 
 Docker prevents duplicate container names, so two agents with the same name cannot run simultaneously. Additionally, `agents.ts` checks GitHub for active agents on the same issue before spawning.
 
-## Docker-in-Docker Path Mapping
+## Docker-in-Docker path mapping
 
 When the daemon runs inside Docker (production), it spawns agent containers as **siblings** on the host Docker. This creates a path translation problem:
 
-```
-Daemon sees:     /app/.workspaces/implement-42-a1b2/
-Host has:        /opt/fritz/.workspaces/implement-42-a1b2/
-Agent needs:     Host path in -v flag
-```
+| Context | Path |
+|---|---|
+| Daemon sees | `/app/.workspaces/implement-42-a1b2/` |
+| Host has | `/opt/fritz/.workspaces/implement-42-a1b2/` |
+| Agent needs | Host path in `-v` flag |
 
-Two environment variables handle this:
+> [!IMPORTANT]
+> Because agents are siblings on the host Docker, their `-v` mounts need host paths, not the daemon's container paths. `HOST_WORKSPACES_DIR` and `HOST_CLAUDE_HOME` supply those host paths; in local dev they are unset because the daemon's paths are already host paths.
 
 | Variable | Purpose | Example |
 |---|---|---|
 | `HOST_WORKSPACES_DIR` | Host path to `.workspaces/` | `/opt/fritz/.workspaces` |
 | `HOST_CLAUDE_HOME` | Host path to `~/.claude/` | `/home/fritz/.claude` |
 
-In local dev, these are unset and the daemon's paths are already host paths.
+### Path resolution in agents.ts
 
-### Path Resolution (agents.ts)
-
-```
+```ts
 if (config.hostWorkspacesDir) {
     // Production: translate container path → host path
     hostWorkspacePath = `${config.hostWorkspacesDir}/${agentName}`
@@ -169,6 +161,7 @@ if (config.hostWorkspacesDir) {
 ### HOST_CLAUDE_HOME
 
 The daemon uses this priority chain to find the credential source:
+
 1. `HOST_CLAUDE_HOME` (explicit override from .env)
 2. `CLAUDE_HOME` (alternative override)
 3. `${HOME}/.claude` (automatic default)
@@ -176,6 +169,7 @@ The daemon uses this priority chain to find the credential source:
 You typically don't need to set this — the default `${HOME}/.claude` works because docker-compose expands `${HOME}` to your host user's home directory before starting the container.
 
 Only set it if:
+
 - You see "Claude home not found" warnings in logs
 - The `.claude` directory is in a non-standard location
 - You're using a custom deployment user with different paths
@@ -197,7 +191,7 @@ Only set it if:
    # HOST_CLAUDE_HOME=${HOME}/.claude
    ```
 
-### Building the Agent Image
+### Building the agent image
 
 ```bash
 cd fritz-orchestrator
@@ -211,7 +205,7 @@ docker build -t fritz-agent-cpp -f Dockerfile.agent.cpp .
 docker build -t fritz-agent-rust -f Dockerfile.agent.rust .
 ```
 
-### Local Development
+### Local development
 
 ```bash
 # From fritz-orchestrator directory
@@ -239,13 +233,15 @@ docker-compose logs -f
 docker-compose down
 ```
 
-### Runtime Detection
+### Runtime detection
 
 The code automatically detects if it's running inside Docker:
+
 - Checks for `/.dockerenv` file
 - Checks `/proc/1/cgroup` for docker/containerd
 
 Override with environment variable:
+
 ```bash
 FRITZ_RUNTIME_MODE=docker  # Force Docker mode
 FRITZ_RUNTIME_MODE=native  # Force native mode
@@ -262,6 +258,7 @@ FRITZ_RUNTIME_MODE=native  # Force native mode
 ### Permission issues
 
 Ensure Docker socket is accessible:
+
 ```bash
 ls -l /var/run/docker.sock
 ```
@@ -269,6 +266,7 @@ ls -l /var/run/docker.sock
 ### Build failures
 
 Dockerfile paths are relative to `fritz-orchestrator/`:
+
 - `daemon/package*.json`
 - `daemon/src`
 - `Dockerfile.agent`
@@ -296,15 +294,19 @@ Dockerfile paths are relative to `fritz-orchestrator/`:
    docker exec fritz-daemon env | grep CLAUDE_HOME
    ```
 
-## Dashboard Browser Requirements
+## Dashboard browser requirements
 
-The dashboard uses **Server-Sent Events (SSE)** for real-time updates. Requirements:
+The dashboard uses **Server-Sent Events (SSE)** for real-time updates.
 
 - Modern browser with `EventSource` and `AbortController` support (Chrome 66+, Firefox 57+, Safari 12.1+)
-- Network path must allow long-lived HTTP connections (SSE). If behind a reverse proxy, ensure it does not buffer or timeout SSE streams (nginx: set `proxy_buffering off` and `proxy_read_timeout 86400s`)
 - The dashboard auto-reconnects on SSE disconnect with exponential backoff (2s → 4s → 8s → 16s → 30s cap). A "Reconnecting" indicator appears in the status bar during reconnection
 
-### Troubleshooting a Frozen Dashboard
+> [!IMPORTANT]
+> The network path must allow long-lived HTTP connections. If the dashboard is behind a reverse proxy, it must not buffer or time out SSE streams. For nginx, set `proxy_buffering off` and `proxy_read_timeout 86400s`.
+
+<!-- screenshot: dashboard status bar showing the Reconnecting indicator -->
+
+### Troubleshooting a frozen dashboard
 
 If the dashboard appears frozen (stale data, no updates):
 
@@ -312,7 +314,7 @@ If the dashboard appears frozen (stale data, no updates):
 2. Check the daemon process: `docker logs fritz-daemon --tail 50`
 3. If the status bar shows "Disconnected" for >60s, hard-refresh the page (`Ctrl+Shift+R`)
 
-## Source References
+## Source references
 
 | File | What it does |
 |---|---|

@@ -1,65 +1,65 @@
-# fritZ Deployment Guide
+# machina Deployment Guide
+
+Provision a server and deploy machina as Docker containers via GitHub Actions. For the full picture, see the [machina orchestrator README](../README.md).
+
+## Contents
+
+- [Overview](#overview)
+- [Server requirements](#server-requirements)
+- [Provisioning a new server](#provisioning-a-new-server)
+- [Deployment via GitHub Actions](#deployment-via-github-actions)
+- [Dashboard remote access (optional)](#dashboard-remote-access-optional)
+- [Server directory structure](#server-directory-structure)
+- [Monitoring and maintenance](#monitoring-and-maintenance)
+- [Troubleshooting](#troubleshooting)
+- [Configuration](#configuration)
 
 ## Overview
 
-fritZ is deployed as a Docker-based system via GitHub Actions CI/CD:
+machina is deployed as a Docker-based system via GitHub Actions CI/CD:
 
 - **Daemon + agents** run as Docker containers
 - **CI/CD**: `build-daemon.yml` + `build-agent-images.yml` build and push images to GHCR; `deploy.yml` deploys via SSH; `build-and-deploy.yml` combines build + deploy in one workflow
-- **No manual git clone on server** -- the deploy workflow copies `docker-compose.prod.yml` and pulls pre-built images
+- **No manual git clone on server** — the deploy workflow copies `docker-compose.prod.yml` and pulls pre-built images
 
-```
-Developer publishes release or triggers manually
-        |
-        v
-build-daemon.yml / build-agent-images.yml
-  - Builds fritz-daemon and fritz-agent Docker images (separate workflows)
-  - Pushes to ghcr.io/your-org/fritz-daemon, ghcr.io/your-org/fritz-agent
-        |
-        v
-deploy.yml (manual trigger or called by build-and-deploy)
-  - SSHs into server as fritz
-  - Copies docker-compose.prod.yml -> /opt/fritz/docker-compose.yml
-  - Copies .env.example -> /opt/fritz/.env.example
-  - Checks .env exists (must be created manually once)
-  - docker login to ghcr.io
-  - docker pull both images
-  - docker tag as fritz-daemon:latest, fritz-agent:latest
-  - docker compose up -d
+```mermaid
+flowchart TD
+    dev[Developer publishes release<br/>or manual dispatch] --> build[build-daemon.yml<br/>build-agent-images.yml]
+    build --> ghcr[Push images to GHCR]
+    ghcr --> deploy[deploy.yml]
+    deploy --> ssh[SSH into server as fritz]
+    ssh --> copy[Copy compose<br/>and env.example]
+    copy --> env[Check .env exists]
+    env --> pull[docker login<br/>and pull images]
+    pull --> tag[Tag images as latest]
+    tag --> up[docker compose up -d]
 ```
 
-## Server Requirements
+## Server requirements
 
-### Recommended Specs
+### Recommended specs
 
-**For Development/Testing:**
-- 2 vCPUs
-- 4 GB RAM
-- 20 GB storage
-- Cost: ~EUR 8-10/month (a small VPS (2 vCPU / 4 GB))
+| Use case | vCPUs | RAM | Storage | Cost |
+|----------|-------|-----|---------|------|
+| Development/testing | 2 | 4 GB | 20 GB | ~EUR 8-10/month (a small cloud VPS) |
+| Production | 4 | 8 GB | 40 GB | ~EUR 25/month (a standard cloud VPS) |
 
-**For Production:**
-- 4 vCPUs
-- 8 GB RAM
-- 40 GB storage
-- Cost: ~EUR 25/month (a larger VPS (4 vCPU / 8 GB))
+### Why these specs?
 
-**Why these specs?**
 - Good CPU performance for running multiple Claude Code agents
 - Sufficient RAM for daemon container + concurrent agent containers
 - Fast storage for agent workspaces
 - Stable network for Telegram/GitHub/Anthropic APIs
 
-### Supported Platforms
+### Supported platforms
+
 - Ubuntu 22.04 LTS (recommended)
 - Debian 11+
 - Any Linux distribution with Docker support
 
----
+## Provisioning a new server
 
-## Provisioning a New Server
-
-### 1. Initial Server Setup
+### 1. Initial server setup
 
 ```bash
 # SSH as root
@@ -94,7 +94,7 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githu
 apt-get update && apt-get install -y gh
 ```
 
-### 4. Create the fritz Service User
+### 4. Create the fritz service user
 
 ```bash
 # Create dedicated service user with home directory
@@ -132,9 +132,10 @@ chmod 700 ~/.claude
 exit
 ```
 
-Note: Credentials are account-bound and cannot be transferred between machines. You must run `claude setup-token` on each server.
+> [!IMPORTANT]
+> Credentials are account-bound and cannot be transferred between machines. You must run `claude setup-token` on each server.
 
-### 6. Set Up SSH Key for GitHub Actions Deployment
+### 6. Set up SSH key for GitHub Actions deployment
 
 ```bash
 # Option A: Add the deploy key's public key to fritz's authorized_keys
@@ -178,7 +179,8 @@ chmod 600 /opt/fritz/.env
 chown fritz:fritz /opt/fritz/.env
 ```
 
-See `.env.example` for all available variables.
+> [!CAUTION]
+> `.env` holds live Telegram and GitHub secrets. Keep it `chmod 600` and owned by `fritz`, and never commit it. See `.env.example` for all available variables.
 
 ### 8. Configure GitHub Secrets
 
@@ -194,6 +196,9 @@ In your repository settings (Settings > Secrets and variables > Actions), add:
 
 ### 9. Deploy
 
+> [!WARNING]
+> Deploying runs `docker compose up -d` on the live server and restarts the daemon and agent containers. Any work in progress on the server is interrupted while containers cycle.
+
 ```bash
 # Option A: Push a version tag (triggers build + you manually trigger deploy)
 git tag v1.0.0 && git push origin v1.0.0
@@ -206,8 +211,6 @@ git tag v1.0.0 && git push origin v1.0.0
 ssh fritz@<server-ip> 'cd /opt/fritz && docker compose ps'
 ```
 
----
-
 ## Deployment via GitHub Actions
 
 ### build-daemon.yml
@@ -215,6 +218,7 @@ ssh fritz@<server-ip> 'cd /opt/fritz && docker compose ps'
 **Triggers:** Manual dispatch, called by `build-and-deploy.yml`
 
 **What it does:**
+
 1. Builds the `fritz-daemon` Docker image
 2. Pushes to `ghcr.io/your-org/fritz-daemon`
 3. Tags with git SHA and `latest`
@@ -224,6 +228,7 @@ ssh fritz@<server-ip> 'cd /opt/fritz && docker compose ps'
 **Triggers:** Manual dispatch
 
 **What it does:**
+
 1. Builds `fritz-agent` Docker images (base, Java, C++ variants)
 2. Pushes to `ghcr.io/your-org/fritz-agent`, `ghcr.io/your-org/fritz-agent-java`, `ghcr.io/your-org/fritz-agent-cpp`
 
@@ -232,6 +237,7 @@ ssh fritz@<server-ip> 'cd /opt/fritz && docker compose ps'
 **Triggers:** Manual dispatch (with environment and optional `image_tag` input), called by `build-and-deploy.yml`
 
 **What it does:**
+
 1. SSHs into the production server as `$SSH_USER`
 2. Copies `docker-compose.prod.yml` to `/opt/fritz/docker-compose.yml`
 3. Copies `.env.example` to `/opt/fritz/.env.example`
@@ -247,64 +253,52 @@ ssh fritz@<server-ip> 'cd /opt/fritz && docker compose ps'
 **Triggers:** Release published, manual dispatch
 
 **What it does:**
+
 1. Calls `build-daemon.yml` to build and push the daemon image
 2. Calls `deploy.yml` to deploy to the server
 
-### How to Deploy
+### How to deploy
 
 1. **Create a release** on GitHub (or push a release tag)
 2. `build-and-deploy.yml` triggers automatically on release publish — builds the daemon image and deploys
 3. Or trigger `build-daemon.yml` and `deploy.yml` manually from the Actions tab
 
----
+## Dashboard remote access (optional)
 
-## Dashboard Remote Access (Optional)
+Remote dashboard access goes through the `nginx` reverse proxy defined in `docker-compose.prod.yml`. nginx terminates TLS with a Let's Encrypt **server** certificate (mounted read-only from `/etc/letsencrypt`) and exposes only the dashboard routes — `/dashboard`, `/api/dashboard/`, and `/system-map` — returning `444` (connection closed) for every other path (see `nginx/nginx.conf`).
 
-To access the dashboard remotely via mTLS:
+> [!CAUTION]
+> There is no client-certificate / mutual-TLS auth. The network posture is a Let's Encrypt TLS server certificate + Tailscale private network + nginx path allowlist returning `444` for everything else. The nginx service publishes no host ports (`ports: []`); it is reachable over the private Tailscale network via your Tailscale edge router acting as an L4 SNI proxy, so Tailscale network membership is the access-control layer.
 
-1. Add to `/opt/fritz/.env`:
+1. Set the proxy domain in `/opt/fritz/.env` (nginx `server_name`; defaults to `fritz.example.com`):
+
    ```bash
    FRITZ_DOMAIN=your-server.example.com
-   FRITZ_DASHBOARD_PORT=8443
-   FRITZ_CLIENT_CERT_PASS=your-secure-password
    ```
 
-2. Allow the dashboard port in your firewall:
-   ```bash
-   sudo ufw allow 8443/tcp
-   ```
+2. Ensure the Let's Encrypt certificate that `nginx/nginx.conf` references (under `/etc/letsencrypt/live/`) exists on the host.
 
-3. Restart the stack — `mtls-init` generates certs on first boot:
+3. Restart the stack:
+
    ```bash
    cd /opt/fritz && docker compose up -d
    ```
 
-4. Download `client.p12` and import into your browser:
-   ```bash
-   scp fritz@<server>:/opt/fritz/mtls/certs/client.p12 ~/Downloads/
-   ```
+See the [dashboard guide](DASHBOARD.md) for full details.
 
-See [DASHBOARD.md](DASHBOARD.md) for full details.
-
----
-
-## Server Directory Structure
+## Server directory structure
 
 After deployment, the server looks like:
 
-```
+```text
 /opt/fritz/
 ├── docker-compose.yml    # Copied from docker-compose.prod.yml by deploy workflow
 ├── .env                  # Created manually once on server
 ├── .env.example          # Copied by deploy workflow
-├── nginx/                # nginx config template (copied by deploy workflow)
+├── nginx/                # nginx config (copied by deploy workflow)
 │   └── nginx.conf
-├── mtls/                 # Auto-generated on first boot (if FRITZ_DOMAIN set)
-│   └── certs/
-│       ├── ca.crt/key
-│       ├── server.crt/key
-│       ├── client.crt/key
-│       └── client.p12
+├── mtls/                 # created empty by the deploy workflow; unused
+│   └── certs/            # (TLS server cert comes from the host's /etc/letsencrypt)
 └── .workspaces/          # Created at runtime by daemon
     ├── fritz/             # Orchestrator workspace
     ├── implement-18/      # Agent workspaces...
@@ -316,24 +310,22 @@ After deployment, the server looks like:
     └── subscription_token.json
 ```
 
----
+## Monitoring and maintenance
 
-## Monitoring and Maintenance
-
-### Check Status
+### Check status
 
 ```bash
 # Container status
 ssh fritz@<server> 'cd /opt/fritz && docker compose ps'
 
-# All fritZ containers (including agents)
+# All machina containers (including agents)
 ssh fritz@<server> 'docker ps --filter "name=fritz-"'
 
 # From Telegram
 fritz status
 ```
 
-### View Logs
+### View logs
 
 ```bash
 # Daemon logs
@@ -342,17 +334,17 @@ docker compose -f /opt/fritz/docker-compose.yml logs -f
 # Specific agent logs
 docker logs fritz-agent-<name>
 
-# Follow all fritZ container logs
+# Follow all machina container logs
 docker logs -f fritz-daemon
 ```
 
-### Workspace Cleanup
+### Workspace cleanup
 
 Workspaces are cleaned up automatically by the watchdog. Old directories (older than `daemon.workspaceMaxAgeHours` in `fritz.yaml`, default 24h) that are not associated with a running agent are removed each check cycle.
 
 You can also trigger cleanup manually via Telegram:
 
-```
+```text
 /cleanup        — remove workspaces older than the configured default
 /cleanup 48     — remove workspaces older than 48 hours
 /cleanup 0      — remove all non-active workspaces regardless of age
@@ -361,6 +353,9 @@ You can also trigger cleanup manually via Telegram:
 To disable automatic cleanup, set `daemon.workspaceMaxAgeHours: 0` in `fritz.yaml`.
 
 **Manual fallback** (if the daemon is not running):
+
+> [!WARNING]
+> `rm -rf` permanently deletes workspace directories. Double-check the path and the `-not -name` guards before running it, and never point it outside `/opt/fritz/.workspaces/`.
 
 ```bash
 # List workspaces
@@ -371,9 +366,9 @@ find /opt/fritz/.workspaces/ -maxdepth 1 -type d -mtime +7 \
   -not -name '.workspaces' -not -name 'fritz' -exec rm -rf {} +
 ```
 
-### Update Deployment
+### Update deployment
 
-Trigger the deploy workflow -- images are rebuilt automatically:
+Trigger the deploy workflow — images are rebuilt automatically:
 
 1. Create a release on GitHub (or trigger workflows manually)
 2. `build-and-deploy.yml` builds the daemon image and deploys
@@ -381,11 +376,9 @@ Trigger the deploy workflow -- images are rebuilt automatically:
 
 No manual `git pull` or `npm install` needed on the server.
 
----
-
 ## Troubleshooting
 
-### Container Not Starting
+### Container not starting
 
 ```bash
 # Check compose logs
@@ -398,7 +391,7 @@ docker logs fritz-daemon
 docker images | grep fritz
 ```
 
-### Agent Credential Issues
+### Agent credential issues
 
 ```bash
 # Check credentials were copied into agent workspace
@@ -411,7 +404,7 @@ stat /opt/fritz/.workspaces/<agent-name>/.claude/.credentials.json
 docker logs fritz-daemon 2>&1 | grep -i "credential\|claude home"
 ```
 
-### Claude Auth Not Working
+### Claude auth not working
 
 ```bash
 # SSH as fritz user and verify Claude Code
@@ -426,7 +419,7 @@ claude setup-token
 cd /opt/fritz && docker compose restart
 ```
 
-### Docker Socket Issues
+### Docker socket issues
 
 ```bash
 # Verify fritz is in docker group
@@ -439,7 +432,7 @@ ls -la /var/run/docker.sock
 sudo usermod -aG docker fritz
 ```
 
-### Agent Not Spawning
+### Agent not spawning
 
 ```bash
 # Check if agent image exists
@@ -452,11 +445,9 @@ docker logs fritz-daemon 2>&1 | grep -i "spawn\|agent\|error"
 docker inspect fritz-daemon | grep -A5 docker.sock
 ```
 
----
-
 ## Configuration
 
 - See `.env.example` for all environment variables and their descriptions
-- See [DOCKER.md](../DOCKER.md) for container architecture, volume mounts, and credential isolation
-- See [SECURITY.md](SECURITY.md) for security hardening and secret management
-- See [CI-CD.md](CI-CD.md) for the full CI/CD pipeline documentation
+- See the [Docker architecture guide](../DOCKER.md) for container architecture, volume mounts, and credential isolation
+- See the [security guide](SECURITY.md) for security hardening and secret management
+- See the [CI/CD pipeline guide](CI-CD.md) for the full CI/CD pipeline documentation

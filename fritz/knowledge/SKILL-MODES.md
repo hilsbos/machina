@@ -1,6 +1,8 @@
-# Skill Modes: Orchestrated vs Standalone
+# Skill Modes
 
-Sub-skills (architect, ux, budget) can run in two modes, determined automatically by checking GitHub labels.
+Sub-skills (architect, ux, budget) can run in two modes — orchestrated and standalone — determined automatically by checking GitHub labels.
+
+_Part of the machina [knowledge base](README.md) — read by every agent at boot._
 
 ## Mode Detection
 
@@ -27,7 +29,7 @@ fi
 - `/define` synthesizes all outputs into the issue body
 
 **Output example**:
-```
+```text
 ## 🏗️ Tech Spec Complete
 **Approach**: [One-line summary]
 Full spec: `fritz/specs/[feature]/TECH_SPEC.md` on the feature branch
@@ -43,7 +45,7 @@ Full spec: `fritz/specs/[feature]/TECH_SPEC.md` on the feature branch
 - Add clickable GitHub URLs to spec files
 
 **Output example**:
-```
+```text
 # Technical Specification: [Feature Name]
 
 ## Overview
@@ -65,3 +67,7 @@ If label detection fails (e.g., `gh issue view` returns empty):
 2. **Reliable detection** — Labels set before agent starts
 3. **Safe defaults** — Falls back to current behavior on failure
 4. **Clear semantics** — "Is `/define` involved?" maps directly to label presence
+
+---
+
+_See also: [LABELS.md](LABELS.md) (the `fritz.skill:` labels), [ARCHITECTURE.md](ARCHITECTURE.md) (agent orchestration), and the [root README](../../README.md)._

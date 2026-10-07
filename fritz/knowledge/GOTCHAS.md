@@ -204,7 +204,7 @@ Issues, quirks, and workarounds discovered during development.
 
 ### Orchestrator API access — FRITZ_API_URL and FRITZ_API_TOKEN
 
-**Problem:** The orchestrator (fritZ) runs as a separate Docker container and could not access the daemon's HTTP API endpoints (`/api/archive`, etc.) because it had no network connectivity to the daemon and no authentication token.
+**Problem:** The orchestrator (machina) runs as a separate Docker container and could not access the daemon's HTTP API endpoints (`/api/archive`, etc.) because it had no network connectivity to the daemon and no authentication token.
 
 **Solution:** The orchestrator container now joins the `fritz` Docker network and receives `FRITZ_API_URL` and `FRITZ_API_TOKEN` environment variables at boot.
 
@@ -302,26 +302,6 @@ Note: GitHub has 3 levels (no `compact`) because GitHub doesn't support edit-in-
 - GitHub becomes an eventual-consistency mirror, not the source of truth for active agent state
 - External tools reading GitHub labels directly would see stale data during the lag window
 <!-- AUTO:RUNTIME:END -->
-
-### Orchestrator API access — FRITZ_API_URL and FRITZ_API_TOKEN
-
-**Problem:** The orchestrator (fritZ) runs as a separate Docker container and could not access the daemon's HTTP API endpoints (`/api/archive`, etc.) because it had no network connectivity to the daemon and no authentication token.
-
-**Solution:** The orchestrator container now joins the `fritz` Docker network and receives `FRITZ_API_URL` and `FRITZ_API_TOKEN` environment variables at boot.
-
-**Key points:**
-- Docker mode: `FRITZ_API_URL` is set to `config.daemonUrl` (typically `http://fritz-daemon:3456`), container joins `fritz` network
-- Native mode: `FRITZ_API_URL` is set to `http://localhost:{apiPort}` in the spawned process env
-- The orchestrator gets its own API token (generated per daemon lifecycle), separate from agent tokens
-- `validateCallerToken()` in `api.ts` accepts both agent tokens and the orchestrator token
-- Token is generated in `orchestrator.ts` via `randomBytes(16).toString('hex')` and exposed via `getOrchestratorApiToken()`
-
-**Usage from orchestrator:**
-```bash
-curl -s -H "Authorization: Bearer $FRITZ_API_TOKEN" $FRITZ_API_URL/api/archive
-curl -s -H "Authorization: Bearer $FRITZ_API_TOKEN" $FRITZ_API_URL/api/archive/{name}/log
-curl -s -H "Authorization: Bearer $FRITZ_API_TOKEN" $FRITZ_API_URL/api/archive/{name}/summary
-```
 
 ### Git blob SHA-1 hash format for GitHub comparison
 
@@ -545,7 +525,7 @@ The OAuth API reports real subscription utilization (including web/mobile usage,
 
 **Solution:** The implement skill now configures git identity at container startup:
 ```bash
-git config user.name "fritZ Agent"
+git config user.name "machina Agent"
 git config user.email "fritz-agent@users.noreply.github.com"
 ```
 <!-- AUTO:PIPELINE:END -->
@@ -561,37 +541,37 @@ git config user.email "fritz-agent@users.noreply.github.com"
 ---
 _Gotchas are added when agents encounter and solve unexpected issues._
 
-# Self-Update & Restart
+## Self-Update & Restart
 
-How fritZ can update and restart itself.
+How machina can update and restart itself.
 
-## Trigger Redeployment
+### Trigger Redeployment
 
 To apply changes from the repo (knowledge, skills, daemon code):
 
 ```bash
-gh workflow run "build-and-deploy.yml" --repo your-org/fritZ
+gh workflow run "build-and-deploy.yml" --repo your-org/machina
 ```
 
 This will:
 1. Build new Docker images
 2. Deploy to your VPS provider server
-3. Restart fritZ daemon with latest changes
+3. Restart machina daemon with latest changes
 
-## When to Use
+### When to Use
 
 - After updating knowledge files (`fritz/knowledge/`)
 - After updating skill definitions (`.claude/skills/`)
 - After daemon code changes (`fritz-orchestrator/`)
 - After Dockerfile changes
 
-## Check Workflow Status
+### Check Workflow Status
 
 ```bash
-gh run list --repo your-org/fritZ --workflow=build-and-deploy.yml --limit 5
+gh run list --repo your-org/machina --workflow=build-and-deploy.yml --limit 5
 ```
 
-## Issue Status Labels
+### Issue Status Labels
 
 Understanding the difference between status labels:
 

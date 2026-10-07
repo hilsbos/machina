@@ -2,9 +2,11 @@
 
 A collective memory that all agents contribute to and learn from.
 
+_Every machina agent reads this knowledge base at boot before starting work. See the [root README](../../README.md) for the full system overview._
+
 ## Structure
 
-```
+```text
 fritz/knowledge/
 ├── README.md              # This file
 ├── ARCHITECTURE.md        # System architecture & component design
@@ -73,3 +75,7 @@ Major edits trigger Telegram notification:
 - Changes to `decision` type entries
 - Entries marked `confidence: high`
 - Deletions of verified entries
+
+---
+
+_See also: [ARCHITECTURE.md](ARCHITECTURE.md) (system design), [LABELS.md](LABELS.md) (label system), [OPERATIONS.md](OPERATIONS.md) (data lifecycle), and the [root README](../../README.md)._

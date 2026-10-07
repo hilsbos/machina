@@ -1,49 +1,32 @@
-# fritZ Skills Overview
+# machina Skills Overview
 
-This document provides a quick reference for all fritZ agent skills, their purposes, and how they work together.
+Quick reference for all machina agent skills, their purposes, and how they work together. For the full system design see the [architecture reference](../../fritz/knowledge/ARCHITECTURE.md); for setup see the [root README](../../README.md).
 
 ## Workflow Diagram
 
+The core delivery cycle runs `define` through `validate`, with a human spec gate after `define` and a rework loop from `review` back to `implement`. The daemon autoloop coordinates every transition via GitHub labels.
+
+```mermaid
+flowchart TD
+    define[define] --> gate1{Approve spec?}
+    gate1 -->|yes| implement[implement]
+    implement --> review[review]
+    review --> validate[validate]
+    review -->|rework| implement
+    validate --> retro[retro]
+    define -.-> ux[ux]
+    define -.-> architect[architect]
+    define -.-> budget[budget]
 ```
-                            WORKFLOW CYCLE
-┌───────────────────────────────────────────────────────────────────────────────┐
-│                                                                               │
-│   ┌──────────┐    ┌─────────┐    ┌───────────┐    ┌────────┐    ┌──────────┐│
-│   │  DEFINE  │───▶│ [HUMAN] │───▶│ IMPLEMENT │───▶│ REVIEW │───▶│ VALIDATE ││
-│   └──────────┘    └─────────┘    └───────────┘    └────────┘    └──────────┘│
-│        │           (reviews              ▲               │              │    │
-│        │            spec)                │               │              │    │
-│        ├── /ux                           │               │              │    │
-│        ├── /architect                    │               ▼              │    │
-│        └── /budget                       └───────────────┘              │    │
-│                                       (rework loop:                     │    │
-│                                        if issues found,                 │    │
-│                                        routes back to implement)        │    │
-│                                                                         │    │
-│                                     ┌──────────┐                        │    │
-│                                     │  RETRO   │◀───────────────────────┘    │
-│                                     └──────────┘                             │
-│                                                                               │
-└───────────────────────────────────────────────────────────────────────────────┘
 
-Daemon autoloop: Coordinates the entire cycle via GitHub labels
+Security testing runs standalone: both the static audit and the active pentest transition to `for-human` for human judgment on the findings.
 
-                       SECURITY TESTING (standalone)
-┌───────────────────────────────────────────────────────────────────────────────┐
-│                                                                               │
-│   for-security-review         for-pentest                                    │
-│          ▼                         ▼                                          │
-│   ┌──────────────────┐     ┌──────────────────┐                              │
-│   │ SECURITY-REVIEW  │     │     PENTEST       │  (requires fritz.lang:kali) │
-│   │  (static audit)  │     │ (active testing)  │                              │
-│   └────────┬─────────┘     └────────┬──────────┘                              │
-│            │                         │                                         │
-│            └──────────┬──────────────┘                                         │
-│                       ▼                                                        │
-│                  [FOR-HUMAN]                                                   │
-│              (human reviews findings)                                          │
-│                                                                               │
-└───────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    fsr[for-security-review] --> sr[security-review<br/>static audit]
+    fp[for-pentest] --> pt[pentest<br/>active testing<br/>requires fritz.lang kali]
+    sr --> human[for-human<br/>human reviews findings]
+    pt --> human
 ```
 
 ## Skills Summary
@@ -122,7 +105,7 @@ Daemon autoloop: Coordinates the entire cycle via GitHub labels
 - `fritz.repo:owner/name` - Target external repo
 
 ### Spec Locations
-```
+```text
 fritz/specs/{issue}-{slug}/
 ├── UX_SPEC.md      # From /ux
 ├── TECH_SPEC.md    # From /architect
@@ -131,7 +114,7 @@ fritz/specs/{issue}-{slug}/
 
 ### Where to write artifacts
 
-Runtime artifacts live under `fritz/` at the repo root: `fritz/specs/`, `fritz/knowledge/`, `fritz/pentest-reports/`. **Do not create new files under `.claude/`.** Claude Code 2.1.78–2.1.125 hard-blocks writes under `.claude/` even with `--dangerously-skip-permissions`; the kali agent image landed in that bug window. Only CC config stays in `.claude/`: `skills/`, `agents/`, `commands/`, `settings.local.json`, plus `orchestrator/` (fritZ orchestrator config — read-only at runtime, no autonomous writes).
+Runtime artifacts live under `fritz/` at the repo root: `fritz/specs/`, `fritz/knowledge/`, `fritz/pentest-reports/`. **Do not create new files under `.claude/`.** Claude Code 2.1.78–2.1.125 hard-blocks writes under `.claude/` even with `--dangerously-skip-permissions`; the kali agent image landed in that bug window. Only CC config stays in `.claude/`: `skills/`, `agents/`, `commands/`, `settings.local.json`, plus `orchestrator/` (machina orchestrator config — read-only at runtime, no autonomous writes).
 
 ## Change History
 

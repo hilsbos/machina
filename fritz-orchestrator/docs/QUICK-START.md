@@ -1,18 +1,31 @@
-# Quick Start Guide
+# machina Quick Start Guide
 
-Get fritZ up and running in minutes - either locally for development or on a production server.
+Get machina up and running in minutes - either locally for development or on a production server. For the full picture, see the [machina orchestrator README](../README.md).
+
+## Contents
+
+- [Prerequisites](#prerequisites)
+- [Local development (5 minutes)](#local-development-5-minutes)
+- [Production deployment](#production-deployment)
+- [Common commands](#common-commands)
+- [Troubleshooting](#troubleshooting)
+- [What's next?](#whats-next)
+- [Documentation](#documentation)
+- [Server requirements](#server-requirements)
+- [Cost breakdown](#cost-breakdown)
+- [Quick reference](#quick-reference)
 
 ## Prerequisites
 
 - Node.js 18+
-- GitHub CLI (gh) authenticated
+- GitHub CLI (`gh`) authenticated
 - Claude Code CLI authenticated
 - Telegram Bot Token
 - GitHub Personal Access Token
 
-## Local Development (5 minutes)
+## Local development (5 minutes)
 
-### 1. Install Dependencies
+### 1. Install dependencies
 
 ```bash
 # Navigate to daemon directory
@@ -37,19 +50,19 @@ gh auth login
 # Follow prompts
 ```
 
-### 4. Configure Telegram Bot
+### 4. Configure Telegram bot
 
-Create a bot with @BotFather on Telegram:
+Create a bot with `@BotFather` on Telegram:
 
-```
+```text
 /newbot
 # Follow prompts
 # Save the token: 123456:ABC-DEF...
 ```
 
-Get your Chat ID from @userinfobot.
+Get your Chat ID from `@userinfobot`.
 
-### 5. Create .env File
+### 5. Create .env file
 
 ```bash
 # Create .env in fritz-orchestrator/daemon/
@@ -71,47 +84,46 @@ EOF
 chmod 600 .env
 ```
 
-### 6. Start the Daemon
+### 6. Start the daemon
 
 ```bash
-# Development (runs TypeScript directly, no build step needed)
+# Development
 npm run dev
 
 # Or for production-like setup:
 npm run build && npm start
 ```
 
+> [!TIP]
+> `npm run dev` runs the TypeScript daemon directly with no build step - the fastest loop for local development.
+
 That's it! Now send a message to your Telegram bot:
 
-```
+```text
 fritz hallo
 ```
 
-You should get a response from Claude Code!
+You should get a response from Claude Code. The dashboard is available at `http://localhost:3456/dashboard` (enabled by default).
 
-The dashboard is available at `http://localhost:3456/dashboard` (enabled by default).
+## Production deployment
 
----
+Production runs as Docker containers, deployed via GitHub Actions. See the [deployment guide](DEPLOYMENT.md) for the full server provisioning walkthrough.
 
-## Production Deployment
-
-Production runs as Docker containers, deployed via GitHub Actions. See [DEPLOYMENT.md](DEPLOYMENT.md) for the full server provisioning guide.
-
-### Quick Summary
+### Quick summary
 
 1. **Provision server**: Install Docker, create `fritz` service user
 2. **Install Claude Code**: `su - fritz && claude setup-token`
 3. **Create `.env`**: Add secrets to `/opt/fritz/.env`
 4. **Configure GitHub Secrets**: `SSH_HOST`, `SSH_USER`, `SSH_PRIVATE_KEY`
-5. **Deploy**: Push a version tag or trigger deploy workflow
+5. **Deploy**: Push a version tag or trigger the deploy workflow
 
 ```bash
 # Deploy via tag
 git tag v1.0.0 && git push origin v1.0.0
-# Then trigger deploy-scaleway.yml from GitHub Actions UI
+# Then trigger deploy.yml from GitHub Actions UI
 ```
 
-### Verify Deployment
+### Verify deployment
 
 ```bash
 # Check container status
@@ -124,9 +136,7 @@ ssh fritz@<server> 'cd /opt/fritz && docker compose logs --tail=50'
 # Send: fritz status
 ```
 
----
-
-## Common Commands
+## Common commands
 
 ### Development
 
@@ -159,7 +169,7 @@ docker compose restart
 docker compose down
 ```
 
-### Local Development (PM2)
+### Local development (PM2)
 
 ```bash
 # Status
@@ -175,9 +185,9 @@ npm run pm2:restart
 npm run pm2:stop
 ```
 
-### Telegram Commands
+### Telegram commands
 
-```
+```text
 fritz <anything>          - Talk to Claude Code
 fritz status              - Show running agents
 fritz boot impl 42        - Start implement agent for issue #42
@@ -185,8 +195,6 @@ fritz stop <name>         - Stop an agent
 fritz logs <name>         - View agent logs
 /cleanup [hours]          - Remove old workspaces
 ```
-
----
 
 ## Troubleshooting
 
@@ -246,66 +254,63 @@ docker ps --filter "name=fritz-"
 docker compose logs fritz-daemon
 ```
 
----
+## What's next?
 
-## What's Next?
-
-After getting fritZ running:
+After getting machina running:
 
 1. **Create a test issue** on GitHub
-2. **Send to fritZ**: `fritz boot implement <issue-number>`
+2. **Send to machina**: `fritz boot implement <issue-number>`
 3. **Watch the agent work** via Telegram updates
 4. **Review the PR** when complete
-5. **Deploy to production** (see DEPLOYMENT.md)
+5. **Deploy to production** (see the [deployment guide](DEPLOYMENT.md))
 
----
+> [!IMPORTANT]
+> The pipeline has two human approval gates - approve the spec, then approve the merge. The `fritz.auto-pipeline` label removes those two gates only; CI is still checked before any merge.
 
 ## Documentation
 
 | Guide | Purpose |
 |-------|---------|
-| **[DEPLOYMENT.md](DEPLOYMENT.md)** | Production server provisioning guide |
-| **[DOCKER.md](../DOCKER.md)** | Container architecture, volumes, credential isolation |
-| **[SECURITY.md](SECURITY.md)** | Security best practices |
-| **[CI-CD.md](CI-CD.md)** | GitHub Actions CI/CD pipeline |
-| **[README.md](../README.md)** | Full fritZ documentation |
+| [Deployment guide](DEPLOYMENT.md) | Production server provisioning guide |
+| [Docker architecture](../DOCKER.md) | Container architecture, volumes, credential isolation |
+| [Security guide](SECURITY.md) | Security best practices |
+| [CI/CD pipeline](CI-CD.md) | GitHub Actions CI/CD pipeline |
+| [Orchestrator README](../README.md) | Full machina documentation |
 
----
-
-## Server Requirements
+## Server requirements
 
 ### Development
+
 - Any machine with Node.js 18+
 - 2 GB RAM minimum
 - Internet connection
 
 ### Production
+
 - 4 vCPUs, 8 GB RAM (recommended)
 - Ubuntu 22.04 LTS or similar
-- Cost: ~€25/month (Scaleway PRO2-S or similar)
+- Cost: ~€25/month (a standard cloud VPS)
 
----
+## Cost breakdown
 
-## Cost Breakdown
+### Free
 
-**Free:**
 - Claude Code (subscription via claude.com)
 - GitHub (public repos)
 - Telegram Bot
 
-**Paid:**
+### Paid
+
 - Production server: €8-25/month (depending on specs)
-- Claude Code subscription: See claude.com/pricing
+- Claude Code subscription: see claude.com/pricing
 
 **Total for production**: ~€30-50/month
 
----
+## Quick reference
 
-## Quick Reference
+### File locations
 
-### File Locations
-
-```
+```text
 fritz-orchestrator/
 ├── daemon/
 │   ├── src/                    # Daemon source code
@@ -320,7 +325,7 @@ fritz-orchestrator/
 └── README.md                   # Full documentation
 ```
 
-### Environment Variables
+### Environment variables
 
 | Variable | Required | Example |
 |----------|----------|---------|
@@ -332,8 +337,6 @@ fritz-orchestrator/
 | `HOST_CLAUDE_HOME` | Production | `/home/fritz/.claude` |
 | `ANTHROPIC_API_KEY` | No* | Fallback for API key billing |
 
-\* Not needed if Claude Code is authenticated (recommended)
-
----
+\* Not needed if Claude Code is authenticated (recommended).
 
 Happy orchestrating!

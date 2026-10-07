@@ -1,52 +1,67 @@
-# fritZ - System Architecture
+# machina System Architecture
+
+System design reference for the machina daemon, its isolated agent containers, and the GitHub-label-driven pipeline. For setup and day-to-day operations, see the [root README](../../README.md) and the [orchestrator hub](../../fritz-orchestrator/README.md).
+
+## Contents
+
+- [Overview](#overview)
+- [Components](#components)
+- [How to run](#how-to-run)
+- [Data flow](#data-flow)
+- [File structure](#file-structure)
+- [Agent lifecycle](#agent-lifecycle)
+- [Issue workflow](#issue-workflow)
+- [Status update pattern](#status-update-pattern)
+- [Configuration](#configuration)
+- [Multi-repo support](#multi-repo-support)
+- [Invocation mode handling](#invocation-mode-handling)
+- [Diagnosis data flow](#diagnosis-data-flow)
+- [Agent communication](#agent-communication-persistent-interactive-sessions)
+- [Retro agent archive integration](#retro-agent--archive-api-integration)
+- [Dashboard](#dashboard)
+- [Usage monitor](#usage-monitor)
+- [Feedback manager](#feedback-manager)
+- [Scheduler](#scheduler)
+- [Event log](#event-log)
+- [GitHub state management](#github-state-management-phased-approach)
+- [Security](#security)
 
 ## Overview
 
+Telegram is the control plane. The daemon runs on the host and manages short-lived agent containers plus an nginx sidecar; each agent is an isolated Claude Code container with a mounted workspace, a role identity, and a task assignment.
+
+```mermaid
+flowchart TD
+    tg[Telegram control plane<br/>fritz boot implement 42]
+
+    subgraph Daemon [machina Daemon Node.js]
+        bridge[Telegram bridge]
+        watch[Watchdog monitor]
+        reg[Registry state]
+        orch[Orchestrator<br/>persistent Claude Code]
+    end
+
+    subgraph Containers [Docker containers and sidecars]
+        nginx[nginx reverse proxy<br/>443 to 3456 TLS 1.3]
+        subgraph Agents [Agent containers isolated]
+            impl[implement agent]
+            rev[review agent]
+            val[validate agent]
+        end
+    end
+
+    tg --> Daemon
+    Daemon --> Containers
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         Telegram                                 │
-│                    "fritz boot implement 42"                     │
-└─────────────────────────────┬───────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    fritZ Daemon (Node.js)                        │
-│                                                                  │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
-│  │   Telegram   │  │   Watchdog   │  │   Registry   │          │
-│  │    Bridge    │  │   Monitor    │  │    State     │          │
-│  └──────────────┘  └──────────────┘  └──────────────┘          │
-│                                                                  │
-│  Orchestrator: Persistent Claude Code for conversations         │
-└─────────────────────────────┬───────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    Docker Containers / Sidecars                   │
-│                                                                  │
-│  ┌─────────────┐                                                │
-│  │ fritZ nginx  │  Reverse proxy (dashboard only)                │
-│  │  :443→:3456 │  TLS 1.3, LE wildcard cert (*.example.com)      │
-│  └─────────────┘                                                │                             │
-│                                                                  │
-│  ┌────────────┐  ┌────────────┐  ┌────────────┐                │
-│  │ implement  │  │  review    │  │  validate  │  ...           │
-│  │   agent    │  │   agent    │  │   agent    │                │
-│  └────────────┘  └────────────┘  └────────────┘                │
-│                                                                  │
-│  Each container runs Claude Code with:                          │
-│  - Mounted workspace                                            │
-│  - Role-specific identity (.fritz/identity.md)                  │
-│  - Task assignment (.fritz/assignment.md)                       │
-└─────────────────────────────────────────────────────────────────┘
-```
+
+Each agent container runs Claude Code with a mounted workspace, a role-specific identity (`.fritz/identity.md`), and a task assignment (`.fritz/assignment.md`). The nginx sidecar is a reverse proxy for the dashboard only (TLS 1.3, Let's Encrypt wildcard cert for `*.example.com`).
 
 ## Components
 
 ### Telegram (Control Plane)
 - Natural language commands ("fritz ...")
 - Agent status and notifications
-- Chat with Claude (API or Claude Code)
+- Chat with Claude Code directly
 - **Edit-in-place updates**: Progress updates edit a single status message instead of sending multiple messages, reducing notification spam (configurable via `telegram.editInPlaceEnabled` in `fritz.yaml`)
 - **Notification modes**: Four verbosity levels for lifecycle notifications — `essential` (only questions, problems, direct replies, and chat-mode hello — blocked, failed, agent_response, hello_chat), `quiet` (warnings/errors only), `compact` (one message per agent, updated in-place via `editMessageText`), `verbose` (every event gets a new message). Chat-mode agent hello messages (`hello_chat` event) are always delivered regardless of mode because the user needs to know the agent is ready for interaction. Auto-mode agent hello messages remain suppressible. Configured via `telegram.notificationMode` in `fritz.yaml` or toggled at runtime with `fritz mode <mode>`. Note: `editInPlaceEnabled` controls chat session feedback (feedback-manager), while `notificationMode: compact` controls agent lifecycle notifications (lifecycle.ts) — they operate on different message streams and coexist safely.
 - **GitHub comment level**: Three verbosity levels for GitHub issue comments — `essential` (only blocked, rework escalation, dependency cycles, conflicts, skill summaries), `quiet` (essential + combined agent start/finish via edit-in-place), `verbose` (every event). Configured via `github.commentLevel` in `fritz.yaml` or toggled at runtime via dashboard. Independent of `telegram.notificationMode`. Gating is handled by `shouldPostComment()` in `github.ts`; in quiet mode, agent-started and agent-finished comments are combined into a single edited comment using `postLifecycleComment()` and `editComment()`.
@@ -65,11 +80,11 @@ Per-chat agent focus for streamlined Telegram interaction.
 - When a chat is "focused" on an agent, replies are auto-routed to that agent without needing `/tell`
 - Auto-cleared when the focused agent stops
 
-### fritZ Daemon (Node.js)
+### machina Daemon (Node.js)
 - **telegram.ts** - Telegram bot, message routing
 - **orchestrator.ts** - Persistent Claude Code orchestrator
 - **agents.ts** - Docker container management
-- **watchdog.ts** - Health monitoring, activity-based TTL enforcement, workspace cleanup, log archive cleanup
+- **watchdog.ts** - Health monitoring, wall-clock TTL enforcement (`getExpiredAgents()` in registry.ts), workspace cleanup, log archive cleanup
 - **log-archive.ts** - Persistent log archive for agent execution logs (survives workspace cleanup)
 - **registry.ts** - Agent state tracking (in-memory cache with debounced JSON file persistence, includes `lastActivity` timestamps)
 - **lifecycle.ts** - Telegram notifications
@@ -81,7 +96,7 @@ Per-chat agent focus for streamlined Telegram interaction.
 - Each agent runs in isolated container
 - Claude Code with full capabilities
 - Workspace created on host and mounted; credentials are copied during boot (point-in-time snapshots)
-- Time-limited (TTL, default 60 min, resets on communication activity)
+- Time-limited (TTL, default 30 min; wall-clock from agent start — does not reset on communication)
 - **Image variants**: Agents run on specialized Docker images selected by `fritz.lang:` labels on the GitHub issue. The base image (`fritz-agent`, from `node:20-slim`) includes Node.js, Claude Code, and gh CLI. Variant images (`fritz-agent-java`, `fritz-agent-cpp`) extend from `fritz-agent` adding language toolchains. `fritz-agent-kali` is a standalone image from `kalilinux/kali-rolling` (reinstalls all prerequisites) providing offensive security tools. Image selection is handled by `LABEL_TO_VARIANT` in `agents.ts`; see LANGUAGES.md for full details.
 
 ## How to Run
@@ -98,30 +113,36 @@ Features:
 
 ## Data Flow
 
-### Daemon Startup Sequence
-```
-1. Load config (.env + fritz.yaml)
-2. Init registry (in-memory cache from registry.json)
-3. Start HTTP API server (port 3456)
-4. Init dashboard (if dashboard.enabled) — subscribes to registry + autoloop + usage-monitor, starts SSE heartbeat
-5. Init Telegram bot
-6. Start autoloop (if configured)
-7. Start usage monitor (if usage.enabled, requires OAuth token; auto-refreshes credentials file token)
-8. Start watchdog
+### Daemon startup sequence
+
+```mermaid
+flowchart TD
+    cfg[Load config<br/>.env and fritz.yaml] --> reg[Init registry<br/>cache from registry.json]
+    reg --> api[Start HTTP API<br/>port 3456]
+    api --> dash[Init dashboard<br/>subscribes and starts SSE]
+    dash --> bot[Init Telegram bot]
+    bot --> loop[Start autoloop<br/>if configured]
+    loop --> usage[Start usage monitor<br/>if usage enabled]
+    usage --> watch[Start watchdog]
 ```
 
-### Boot Agent
+The dashboard step runs only when `dashboard.enabled`; it subscribes to the registry, autoloop, and usage-monitor, then starts the SSE heartbeat. The usage monitor requires an OAuth token and auto-refreshes the credentials-file token.
+
+### Boot agent
+
+```mermaid
+flowchart TD
+    cmd[User<br/>fritz boot implement 42] --> recv[Daemon receives<br/>via Telegram]
+    recv --> ws[Create workspace<br/>identity and assignment]
+    ws --> spawn[Spawn Docker container]
+    spawn --> ver[Capture Claude Code version]
+    ver --> work[Container reads CLAUDE.md<br/>starts working]
+    work --> mon[Watchdog monitors<br/>wall-clock TTL and health]
+    mon --> pr[Agent creates PR<br/>notifies Telegram]
+    pr --> exit[Container exits<br/>cleanup]
 ```
-1. User: "fritz boot implement 42"
-2. Daemon receives via Telegram
-3. Creates workspace with identity + assignment
-4. Spawns Docker container
-5. Captures Claude Code version via `docker exec claude --version`
-6. Container reads CLAUDE.md, starts working
-7. Watchdog monitors TTL (resets on activity) and health
-8. Agent creates PR, notifies Telegram
-9. Container exits, cleanup
-```
+
+Version capture uses `docker exec claude --version`. TTL is wall-clock from agent start.
 
 ### Boot Mode Matrix
 
@@ -149,21 +170,22 @@ Chat mode agents receive a context-aware welcome message showing:
 - Context summary (comment count, latest comment preview, related PRs)
 - Instructions to reply or use `/tell` to give commands
 
-### Orchestrator Message
-```
-1. User: "fritz erstelle ein issue"
-2. Daemon writes to .workspaces/fritz/.fritz/inbox.txt
-3. Orchestrator (Claude Code) reads inbox
-4. Executes task (gh issue create ...)
-5. Writes response to outbox.txt
-6. Daemon reads outbox, sends to Telegram
+### Orchestrator message
+
+```mermaid
+flowchart TD
+    msg[User<br/>fritz erstelle ein issue] --> inbox[Daemon writes inbox.txt<br/>.workspaces/fritz/.fritz]
+    inbox --> read[Orchestrator reads inbox]
+    read --> exec[Executes task<br/>gh issue create]
+    exec --> out[Writes outbox.txt]
+    out --> relay[Daemon reads outbox<br/>sends to Telegram]
 ```
 
 ### Orchestrator — Pipeline Planning Role
 
-The orchestrator (fritZ) is a conversational pipeline planner accessible via Telegram and API:
+The orchestrator (machina) is a conversational pipeline planner accessible via Telegram and API:
 - The owner (or an external agent system via fritzbridge) describes intent in natural language ("chain the fritzmonitor tickets", "move #617 to the front")
-- fritZ reads the relevant issues, infers ordering, and applies `fritz.depends-on:N` and `priority:p0` labels via `gh issue edit`
+- machina reads the relevant issues, infers ordering, and applies `fritz.depends-on:N` and `priority:p0` labels via `gh issue edit`
 - No wave planner, no state machine — label manipulation is the only side effect
 - Messages are serialized via a queue (`core/message-queue.ts`) — only one Claude process at a time
 
@@ -183,18 +205,21 @@ The orchestrator (fritZ) is a conversational pipeline planner accessible via Tel
 - `pipeline.dependency-applied` — orchestrator applied a fritz.depends-on label (planned — not yet emitted)
 - Events flow through SSE stream → fritzbridge → external agent system
 
-### Orchestrator Knowledge Loading
+### Orchestrator knowledge loading
+
+```mermaid
+flowchart TD
+    ews[ensureWorkspace runs<br/>at daemon start or refresh] --> id[Read orchestrator SKILL.md<br/>fallback hardcoded]
+    id --> shared[Copy fritz knowledge<br/>to orchestrator shared]
+    shared --> override[Copy orchestrator knowledge<br/>overrides shared]
+    override --> refresh[refresh re-runs this<br/>resets isFirstMessage]
 ```
-1. ensureWorkspace() runs at daemon start (or /refresh)
-2. Reads .claude/orchestrator/SKILL.md for identity (fallback: hardcoded)
-3. Copies fritz/knowledge/* → orchestrator .fritz/knowledge/ (shared)
-4. Copies .claude/orchestrator/knowledge/* → orchestrator .fritz/knowledge/ (overrides shared)
-5. /refresh command re-runs this + resets isFirstMessage for identity re-injection
-```
+
+`.claude/orchestrator/SKILL.md` provides the identity; `/refresh` re-runs the sequence and resets `isFirstMessage` for identity re-injection.
 
 ## File Structure
 
-```
+```text
 fritz-orchestrator/
 └── daemon/               # Node.js daemon
     ├── src/
@@ -290,26 +315,21 @@ config/
 
 ## Agent Lifecycle
 
-```
-   ┌──────────┐
-   │ STARTING │  Container spawning
-   └────┬─────┘
-        │
-        ▼
-   ┌──────────┐
-   │ WORKING  │  Agent executing task
-   └────┬─────┘  (TTL resets on each communication event)
-        │
-   ┌────┴────┬────────────┐
-   ▼         ▼            ▼
-┌──────┐ ┌───────┐ ┌──────────┐
-│ DONE │ │TIMEOUT│ │  DEAD    │
-└──────┘ └───────┘ └──────────┘
-           (no activity
-            within TTL)
+```mermaid
+stateDiagram-v2
+    [*] --> STARTING
+    STARTING --> WORKING: container spawned
+    WORKING --> DONE: task complete
+    WORKING --> TIMEOUT: wall-clock TTL elapsed
+    WORKING --> DEAD: health check fails
+    DONE --> [*]
+    TIMEOUT --> [*]
+    DEAD --> [*]
 ```
 
-Communication events that reset TTL:
+`STARTING` is the container spawning; `WORKING` is the agent executing its task. TTL is wall-clock from agent start, so `TIMEOUT` fires when that wall-clock budget elapses regardless of recent activity.
+
+Communication events (recorded as `lastActivity` for display only — they do **not** reset TTL; TTL is wall-clock from agent start, and the watchdog separately cleans up dead/stale agents):
 - Agent → Daemon: `report.sh progress/blocked/complete` (POST /api/notify)
 - Agent → Daemon: `report.sh ask` (POST /api/ask)
 - User → Agent: `/tell` command in Telegram
@@ -329,49 +349,89 @@ Issues labeled `fritz.long-running` disable TTL expiration for their agents:
 
 | Category | Prefix | Rationale | Examples |
 |----------|--------|-----------|----------|
-| **fritZ system labels** (daemon creates, manages, or acts on to change agent behavior) | `fritz.` | Signals "this is a fritZ infrastructure label" | `fritz.status:active`, `fritz.skill:implement`, `fritz.repo:owner/name`, `fritz.long-running`, `fritz.lang:java`, `fritz.auto-pipeline` |
+| **machina system labels** (daemon creates, manages, or acts on to change agent behavior) | `fritz.` | Signals "this is a machina infrastructure label" | `fritz.status:active`, `fritz.skill:implement`, `fritz.repo:owner/name`, `fritz.long-running`, `fritz.lang:java`, `fritz.auto-pipeline` |
 | **Dependency labels** (daemon reads to check issue ordering) | `fritz.depends-on:` | Links issues for ordering | `fritz.depends-on:123`, `fritz.depends-on:456` |
-| **Project management labels** (meaningful independent of fritZ, daemon may read but doesn't own) | No prefix | Standard GitHub convention | `priority:p0`, `type:feature` |
+| **Project management labels** (meaningful independent of machina, daemon may read but doesn't own) | No prefix | Standard GitHub convention | `priority:p0`, `type:feature` |
 
 ## Issue Workflow
 
 Status labels use the `for-{role}` pattern, indicating what the issue is waiting for.
 
-### Success Path
-```
-for-define → define → defined → [HUMAN REVIEWS] → for-implement → implement → for-review → review → for-validate → validate → validated → [DASHBOARD APPROVE] → for-merge → [AUTOLOOP: CI check + merge] → merged/closed
+### Success path
+
+```mermaid
+flowchart TD
+    def[for-define<br/>define writes spec] --> gate1{Approve spec?}
+    gate1 -->|yes| impl[for-implement<br/>implement opens PR]
+    impl --> rev[for-review<br/>review]
+    rev --> val[for-validate<br/>validate QA]
+    val --> gate2{Approve merge?}
+    gate2 -->|dashboard approve| merge[for-merge<br/>autoloop CI check and merge]
+    merge --> done[merged and closed]
 ```
 
-### Dashboard Approve Path (validated → merge)
+`gate1` is the human spec review (`defined`); `gate2` is the dashboard merge approval (`validated`). Both gates become automatic under `fritz.auto-pipeline`, but CI is still checked at `for-merge`.
+
+### Dashboard approve path (validated to merge)
+
+```mermaid
+flowchart LR
+    v[validated] -->|dashboard approve| fm[for-merge]
+    fm --> ci[autoloop CI check]
+    ci --> m[merge PR]
+    m --> c[close issue]
 ```
-validated → [DASHBOARD APPROVE] → for-merge → [AUTOLOOP: CI check → merge PR → close issue]
-```
+
 When a user clicks "Approve" on a `validated` issue in the Dashboard:
 1. Issue transitions to `for-merge`
 2. Autoloop checks CI status: green → merge, pending → retry next cycle, failed → `for-human`
 3. Autoloop checks mergeability: mergeable → squash merge, conflicts → `for-human`
 4. On success: merge PR, close issue, post comment, notify Telegram
 
-### Auto-Pipeline Path (with `fritz.auto-pipeline` label)
+### Auto-pipeline path (with `fritz.auto-pipeline` label)
+
+```mermaid
+flowchart TD
+    def[for-define] --> defined[defined]
+    defined -->|auto| impl[for-implement]
+    impl --> rev[for-review]
+    rev --> val[for-validate]
+    val --> validated[validated]
+    validated -->|auto| fm[for-merge]
+    fm --> ci[CI check]
+    ci --> m[merge and close]
 ```
-for-define → define → defined → [AUTO] for-implement → implement → for-review → review → for-validate → validate → validated → [AUTO] merge + close
-```
-When `fritz.auto-pipeline` is set on an issue, two manual gates become automatic:
+
+> [!IMPORTANT]
+> `fritz.auto-pipeline` removes the two human gates only. CI is still checked at `for-merge` before merge; a repo with no CI configured effectively merges on trust.
+
+When `fritz.auto-pipeline` is set on an issue, two manual **human** gates become automatic:
 1. `defined` → `for-implement` (skips human spec review)
-2. `validated` → merge PR + close issue (skips human merge, bypasses `for-merge` CI checks)
+2. `validated` → `for-merge` (skips the human merge gate; the `for-merge` handler still runs CI checks before merging — see `handleAutoPipelineValidated()` in autoloop.ts)
+
+Auto-pipeline does **not** skip CI: the issue still passes through `for-merge`, which checks CI and escalates to `for-human` on failure. A repo with no CI configured effectively merges on trust.
 
 ### Depends-On Support
 Issues with `fritz.depends-on:NNN` labels are blocked until dependency issue #NNN is closed.
 The autoloop checks dependencies before spawning any agent.
 
-### Rework Path (review/validate rejects)
-```
-implement → for-review → review (rejects) → for-rework → implement (fixes) → for-review → ...
+### Rework path (review/validate rejects)
+
+```mermaid
+flowchart LR
+    impl[implement] --> rev[for-review]
+    rev --> reject[review rejects]
+    reject -->|rework| rework[for-rework]
+    rework --> fix[implement fixes]
+    fix --> rev
 ```
 
-### Safety Valve (max 3 rework cycles)
-```
-... → review (rejects, cycle 3) → for-human → human investigates
+### Safety valve (max 3 rework cycles)
+
+```mermaid
+flowchart LR
+    c3[review rejects<br/>cycle 3] --> human[for-human]
+    human --> inv[human investigates]
 ```
 
 Rework is triggered when review or validate agents call `report.sh complete --outcome=rejected`.
@@ -395,7 +455,7 @@ When cycle count exceeds 3, the issue escalates to `for-human` with a Telegram n
 | `fritz.status:for-human` | Needs human attention | none |
 | `fritz.status:active` | Agent currently working | — |
 | `fritz.status:for-merge` | Dashboard-approved, autoloop handles merge | No (autoloop merges inline with CI checks) |
-| `fritz.status:validated` | Validation passed | none (human merge via Dashboard; auto-pipeline: auto-merges PR + closes issue) |
+| `fritz.status:validated` | Validation passed | none (human merge via Dashboard; auto-pipeline: auto-advances to for-merge, where CI is still checked) |
 | `fritz.status:accepted` | Human approved, ready to merge | — |
 
 ## Status Update Pattern
@@ -423,7 +483,7 @@ Configuration is split across three layers based on a guiding principle:
 | **Code constants** | Internal invariants (buffer sizes, cache TTLs, protocol constants) | Yes (source) |
 
 ### `.env` — Secrets & Infrastructure Identity
-```
+```bash
 # Authentication (optional for local dev with Claude Code installed)
 ANTHROPIC_API_KEY=sk-ant-...
 
@@ -439,7 +499,8 @@ GITHUB_REPO=owner/repo
 ### `fritz.yaml` — Operational Tuning
 ```yaml
 defaults:
-  ttl: 3600
+  ttl: 1800
+  chatTtl: 14400
   model: claude-sonnet-4-6      # Sonnet default; implement/architect/security-review override to Opus
 claude:
   claudeSkipPermissions: true
@@ -455,8 +516,8 @@ telegram:
   notificationMode: essential  # essential | quiet | compact | verbose
 roles:
   implement:
-    ttl: 14400
-    model: claude-opus-4-6     # Override: complex coding stays on Opus
+    ttl: 1500
+    model: claude-opus-4-8     # Override: complex coding stays on Opus
 ```
 
 Operational configuration in `config/fritz.yaml`:
@@ -471,31 +532,33 @@ Operational configuration in `config/fritz.yaml`:
 
 ## Multi-Repo Support
 
-fritZ can orchestrate work on external repositories while keeping all issue tracking centralized.
+machina can orchestrate work on external repositories while keeping all issue tracking centralized.
 
 ### Label Syntax
-```
+```text
 fritz.repo:owner/name           → Clone repo, use default branch
 fritz.repo:owner/name:branch    → Clone repo, checkout specified branch
 ```
 
 ### Data Flow (External Repo)
+
+```mermaid
+flowchart TD
+    issue[Issue with fritz.repo label<br/>client/app feature branch] --> detect[Daemon detects label<br/>getTargetRepoInfo]
+    detect --> boot[Agent boots with<br/>machina skills and knowledge]
+    boot --> clone[Agent clones client/app<br/>not machina]
+    clone --> co[Checkout target branch]
+    co --> fb[Create feature branch<br/>feature/42-add-oauth]
+    fb --> pr[Open PR targeting<br/>the target branch]
+    pr --> track[Status tracking stays<br/>in machina issue]
 ```
-1. Issue created with fritz.repo:client/app:feature/1.8.0 label
-2. Daemon detects fritz.repo: label via getTargetRepoInfo()
-3. Agent boots with fritZ skills/knowledge
-4. Agent clones client/app (not fritZ)
-   - If clone fails → boot aborts, issue set to for-human, warning comment posted
-5. Agent checkouts feature/1.8.0 branch
-6. Agent creates feature branch: feature/42-add-oauth
-7. Agent opens PR targeting feature/1.8.0
-8. All status tracking stays in fritZ issue
-```
+
+If the clone fails the boot aborts, the issue is set to `for-human`, and a warning comment is posted.
 
 **Invalid repo/branch handling:** When a `fritz.repo:` label points to a non-existent repository or branch, the clone fails fast — the boot is aborted, the issue is set to `for-human`, and a warning comment with error details is posted. This prevents agents from running with an empty `./project/` directory. Clone failures for the default repo (`config.githubRepo`) remain non-fatal warnings to avoid blocking agents during transient network issues.
 
 ### Branch Targeting
-```
+```text
 feature/1.8.0  ←────────────────── PR targets here
     │
     └── feature/42-add-oauth  ←── Agent works here
@@ -513,23 +576,20 @@ The assignment.md explicitly instructs the agent to use `gh pr create --base <br
 Sub-skill agents (architect, ux, budget) can be invoked in two modes:
 
 ### Standalone Mode (via `/boot`)
-```
-User: "fritz boot architect 123"
-   ↓
-Agent completes → transitions to 'defined'
-   ↓
-Ready for human review (no define synthesis step)
+
+```mermaid
+flowchart TD
+    cmd[fritz boot architect 123] --> done[Agent completes<br/>transitions to defined]
+    done --> review[Ready for human review<br/>no define synthesis step]
 ```
 
 ### Orchestrated Mode (via `/define`)
-```
-User: "fritz define 123"
-   ↓
-Define agent spawns architect, ux, budget
-   ↓
-Sub-skill completes → transitions to 'for-define'
-   ↓
-Define agent synthesizes all specs → 'defined'
+
+```mermaid
+flowchart TD
+    cmd[fritz define 123] --> spawn[Define agent spawns<br/>architect ux budget]
+    spawn --> sub[Sub-skill completes<br/>transitions to for-define]
+    sub --> synth[Define agent synthesizes<br/>all specs to defined]
 ```
 
 ### Detection Mechanism
@@ -549,17 +609,19 @@ Default behavior is 'orchestrated' for backwards compatibility.
 
 The `/diagnose` command runs entirely within the daemon process (no containers spawned):
 
+```mermaid
+flowchart TD
+    cmd[User runs fritz diagnose] --> hash[Compute git blob SHA-1<br/>of local skills and knowledge]
+    hash --> fetch[Fetch GitHub tree API<br/>recursive for main]
+    fetch --> cmp[Compare local vs remote hashes<br/>zero-download comparison]
+    cmp --> cfg[Check config freshness<br/>fritz.yaml disk vs loaded]
+    cfg --> snap[Collect active agent snapshots]
+    snap --> report[Format and send report<br/>to Telegram with buttons]
+    report --> redeploy[Redeploy button runs<br/>build-and-deploy.yml]
+    report --> details[Details button shows<br/>per-file verbose comparison]
 ```
-1. User: "fritz diagnose" or "/diagnose"
-2. Daemon computes git blob SHA-1 hashes of local .claude/skills/ and fritz/knowledge/
-3. Daemon fetches GitHub tree API: GET /repos/{owner}/{repo}/git/trees/main?recursive=1
-4. Compares local hashes against remote SHA-1 hashes (zero-download comparison)
-5. Checks config freshness (fritz.yaml on disk vs loaded)
-6. Collects active agent snapshots from registry
-7. Formats and sends report to Telegram with action buttons
-8. [Redeploy] button triggers gh workflow run build-and-deploy.yml (with confirmation)
-9. [Details] button shows per-file verbose comparison
-```
+
+The `[Redeploy]` button triggers `gh workflow run build-and-deploy.yml` with a confirmation prompt.
 
 Graceful degradation:
 - No GH_TOKEN → local-only report with "cannot compare" message
@@ -572,33 +634,23 @@ All agents use persistent interactive sessions for daemon-to-agent communication
 
 ### Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      agent-comms.ts                           │
-│                                                               │
-│  initAgent(name)  ← always creates PersistentState            │
-│                                                               │
-│  ┌──────────────────────────────────────────────────────────┐│
-│  │  PERSISTENT MODE (default for all agents)                ││
-│  │                                                          ││
-│  │  docker exec -i claude -p                                ││
-│  │    --input-format stream-json                            ││
-│  │    --output-format stream-json                           ││
-│  │  NDJSON stdin, one proc per session                      ││
-│  │                                                          ││
-│  │  PersistentState:                                        ││
-│  │  + stdoutBuffer, sessionId                               ││
-│  │  + pendingResolve/Reject                                 ││
-│  │  + persistentStarted                                     ││
-│  └──────────────────────────────────────────────────────────┘│
-│                          │                                    │
-│                          ▼ (on session death)                 │
-│  ┌──────────────────────────────────────────────────────────┐│
-│  │  ONE-SHOT FALLBACK (automatic, unchanged)                ││
-│  │  fallbackToOneShot() → creates OneShotState              ││
-│  │  docker exec claude -p "msg" per turn                    ││
-│  └──────────────────────────────────────────────────────────┘│
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    init[initAgent name<br/>always creates PersistentState]
+
+    subgraph Persistent [Persistent mode default]
+        p1[docker exec -i claude -p<br/>stream-json in and out]
+        p2[NDJSON stdin<br/>one proc per session]
+        p3[PersistentState<br/>stdoutBuffer sessionId pending]
+    end
+
+    subgraph Fallback [One-shot fallback automatic]
+        f1[fallbackToOneShot<br/>creates OneShotState]
+        f2[docker exec claude -p msg<br/>per turn]
+    end
+
+    init --> Persistent
+    Persistent -->|on session death| Fallback
 ```
 
 ### How It Works
@@ -625,8 +677,10 @@ All agents use persistent interactive sessions for daemon-to-agent communication
 
 The retro agent consumes the daemon's log archive API to perform log-driven analysis:
 
-```
-Retro Agent  ──curl──▶  Daemon /api/archive  ──reads──▶  {workspacesDir}/logs/archive/
+```mermaid
+flowchart LR
+    retro[Retro agent] -->|curl| api[Daemon /api/archive]
+    api -->|reads| store[workspacesDir<br/>logs/archive]
 ```
 
 - **Endpoints consumed**: `GET /api/archive` (listing), `GET /api/archive/:name/summary`, `GET /api/archive/:name/log`
@@ -719,7 +773,7 @@ GitHub write operations follow a phased decoupling strategy:
 - Secrets in environment only
 - Docker isolation for agents
 - **Agent write API (unauthenticated)**: The `/api/github/issues/:number/{comment,labels}` endpoints have no auth — they rely on Docker network isolation (only containers on the internal `fritz` network can reach the daemon)
-- Time-limited execution (activity-based TTL)
+- Time-limited execution (wall-clock TTL from agent start)
 - No persistent state in containers
 - **Telegram chat ID middleware**: All bot messages are gated by `TELEGRAM_CHAT_ID` — DMs and foreign groups are silently dropped (issue #290)
 - **Per-agent API tokens**: Each agent receives a unique `FRITZ_API_TOKEN` at boot, validated on `/api/notify`, `/api/ask`, and `/api/archive` endpoints (issue #290)

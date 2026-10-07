@@ -1,6 +1,8 @@
-# fritZ Operations — Data Lifecycle & Retention
+# machina Operations — Data Lifecycle & Retention
 
-fritZ manages data across agent workspaces, log archives, registry state, Docker containers, and in-memory caches. Each has its own retention policy, cleanup trigger, and configuration. This guide is the single source of truth for all data lifecycle mechanisms.
+machina manages data across agent workspaces, log archives, registry state, Docker containers, and in-memory caches. Each has its own retention policy, cleanup trigger, and configuration. This guide is the single source of truth for all data lifecycle mechanisms.
+
+_Part of the machina [knowledge base](README.md) — read by every agent at boot._
 
 ## Quick Reference
 
@@ -20,27 +22,29 @@ fritZ manages data across agent workspaces, log archives, registry state, Docker
 
 ## 1. Agent TTL & Expiration
 
+> [!NOTE]
+> TTL is wall-clock time measured from the agent's `started` timestamp and does NOT reset on activity or communication. Defaults: `1800s` (30m); chat mode `14400s` (4h base); `implement` role `1500s`.
+
 ### What
-Agents have a time-to-live (TTL) that determines maximum execution duration. TTL resets on each communication event (bidirectional activity-based).
+Agents have a time-to-live (TTL) that determines maximum execution duration. TTL is wall-clock time measured from the agent's `started` timestamp — it does NOT reset on communication or activity (`core/registry.ts` `getExpiredAgents()`).
 
 ### Configuration
-- `defaults.ttl`: Global default (3600s = 1 hour)
-- `roles.{role}.ttl`: Per-role override (e.g., implement: 14400s = 4 hours)
+- `defaults.ttl`: Global default (1800s = 30 minutes)
+- `roles.{role}.ttl`: Per-role override (e.g., implement: 1500s = 25 minutes)
 - `teams.ttlMultiplier`: Multiplier applied to all agent TTLs (default: 2.0)
 - `fritz.long-running` label: Sets TTL=0 (disabled, never expires)
 
-### TTL Reset Events
-1. Agent → Daemon: `report.sh progress/blocked/complete` (POST /api/notify)
-2. Agent → Daemon: `report.sh ask` (POST /api/ask)
-3. User → Agent: `/tell` command in Telegram
-4. User → Agent: Reply to agent message in Telegram
-
 ### How It Works
 - Watchdog checks every `watchdogIntervalSec` (default: 60s)
-- `registry.getExpiredAgents()` computes: `baseline + (ttl * 1000) < now`
-- Baseline = `lastActivityAt` (if set) OR `started` timestamp
+- `registry.getExpiredAgents()` computes: `expires = new Date(started).getTime() + ttl * 1000`, then `now > expires`
+- The baseline is the fixed `started` timestamp — communication/activity does NOT extend it. `lastActivityAt` is recorded for display only and does not affect TTL.
 - Agents with `ttl === 0` are skipped (long-running)
 - On expiry: `lifecycle.timeout()` → `agents.stopAgent(name, 'dead')`
+
+> [!WARNING]
+> At TTL expiry the agent is stopped immediately regardless of in-flight work — because TTL is wall-clock, an active agent is not spared. Use the `fritz.long-running` label (TTL=0) for work that must not be time-boxed.
+
+TTL expiry is distinct from the watchdog's detection of dead/stale containers (`syncProcesses()`), which deregisters agents whose process has vanished regardless of TTL.
 
 ### Key Files
 - `core/registry.ts` — `getExpiredAgents()`, `touchAgent()`
@@ -229,6 +233,9 @@ In-memory state for persistent interactive sessions between daemon and agents.
 ### What
 File-based state for the usage monitor's autoloop pause mechanism.
 
+> [!WARNING]
+> When Claude subscription usage is high, the usage-monitor writes `.workspaces/usage-paused` and the autoloop stops spawning new agents until hysteresis allows resume. In-flight agents keep running; only new spawns pause.
+
 ### Files
 - `.workspaces/usage-paused` — Created when usage exceeds threshold, removed when hysteresis allows resume
 - `.workspaces/usage-override` — Created when operator toggles override via dashboard
@@ -254,8 +261,8 @@ File-based state for the usage monitor's autoloop pause mechanism.
 - `fritz unblock #N` — remove all `fritz.depends-on:*` labels from issue N
 
 ### Conversational Planning
-Tell fritZ in natural language:
-- "Chain the fritzmonitor tickets" → fritZ reads issues, infers order, applies fritz.depends-on labels
+Tell machina in natural language:
+- "Chain the fritzmonitor tickets" → machina reads issues, infers order, applies fritz.depends-on labels
 - "Move #617 to the front, client is blocked" → adds priority:p0
 - "Hold everything on fritzmonitor until #611 is done" → applies fritz.depends-on + fritz.manual
 
@@ -271,13 +278,13 @@ Tell fritZ in natural language:
 - `POST /api/pipeline/express` — `{ issue: N }` → adds priority:p0
 - `POST /api/pipeline/hold` — `{ issue: N }` → adds fritz.manual
 - `POST /api/pipeline/release` — `{ issue: N }` → removes fritz.manual
-- `POST /api/orchestrator/message` — `{ message, commandHint?, timeoutMs? }` → conversational relay to fritZ orchestrator
+- `POST /api/orchestrator/message` — `{ message, commandHint?, timeoutMs? }` → conversational relay to machina orchestrator
 - `POST /api/notify` — agent → daemon notification
 - `POST /api/ask` — agent → daemon question (blocks for answer)
 - `GET /api/archive` — list archived agent sessions
 
 **fritzbridge API** (port 9876, optional bridge to an external agent system):
-- `POST /fritz/converse` — talk to fritZ orchestrator (primary external agent → fritZ channel)
+- `POST /fritz/converse` — talk to machina orchestrator (primary external agent → machina channel)
 - `POST /fritz/tell` — message to a specific agent
 - `POST /fritz/boot` / `POST /fritz/stop` — agent lifecycle
 - `POST /fritz/submit` — create GitHub issue
@@ -312,7 +319,8 @@ All retention-related settings in `config/fritz.yaml`:
 
 ```yaml
 defaults:
-  ttl: 3600                          # Default agent TTL in seconds
+  ttl: 1800                          # Default agent TTL in seconds (30m base)
+  chatTtl: 14400                     # Chat-mode TTL base (4h), used for -chat agents
 
 daemon:
   watchdogIntervalSec: 60            # Cleanup check frequency
@@ -325,15 +333,19 @@ teams:
 
 roles:
   implement:
-    ttl: 14400                       # 4 hours for implement agents
+    ttl: 1500                        # 25m base for implement agents
   architect:
-    ttl: 10800                       # 3 hours for architect agents
+    ttl: 3600                        # 1h base for architect agents
   review:
-    ttl: 7200                        # 2 hours for review agents
+    ttl: 900                         # 15m base for review agents
   validate:
-    ttl: 7200                        # 2 hours for validate agents
-  security-review:
-    ttl: 7200                        # 2 hours for security-review agents
+    ttl: 900                         # 15m base for validate agents
+  define:
+    ttl: 1200                        # 20m base for define agents
+  pentest:
+    ttl: 3600                        # 1h base for pentest agents
+  # Effective TTL = ttl × teams.ttlMultiplier. Roles without a ttl override
+  # (e.g. ux, security-review, budget) inherit defaults.ttl.
   # ... see fritz.yaml for all role-specific TTLs
 ```
 
@@ -364,7 +376,8 @@ Agent containers proxy GitHub writes through the daemon instead of calling `gh` 
 - `POST /api/github/issues/:number/comment` — post an issue comment (body: `{ body: string }`)
 - `POST /api/github/issues/:number/labels` — add/remove labels (body: `{ add?: string[], remove?: string[] }`)
 
-These endpoints are unauthenticated — security relies on Docker network isolation (only agent containers on the internal `fritz` network can reach the daemon). See [ARCHITECTURE.md](ARCHITECTURE.md) § Security.
+> [!IMPORTANT]
+> These endpoints are unauthenticated — security relies on Docker network isolation (only agent containers on the internal `fritz` network can reach the daemon). See [ARCHITECTURE.md](ARCHITECTURE.md) § Security.
 
 ### Configuration
 - Write queue is enabled by default
@@ -372,6 +385,7 @@ These endpoints are unauthenticated — security relies on Docker network isolat
 - Token bucket config: max queue depth 20/50/40/20 (critical/high/normal/low priority)
 
 ---
+
 
 ## Server Infrastructure (your-server)
 
@@ -381,16 +395,17 @@ All services are behind Tailscale — no public ports except SSH. Access require
 
 | URL | Service |
 |-----|---------|
-| `https://fritz.example.com/dashboard` | fritZ Dashboard |
+| `https://fritz.example.com/dashboard` | machina Dashboard |
 | `https://fritz.example.com/system-map` | System Map |
 
 ### Edge Router
 
 A lightweight L4 SNI proxy (`edge-router`) listens on the Tailscale IP (`100.x.x.x:443`) and routes TLS connections by hostname to the correct backend nginx. No TLS termination — it reads the SNI field and forwards raw TCP.
 
-```
-Tailscale IP :443 → edge-router (L4 SNI)
-  └── fritz.example.com  → fritz-nginx:443
+```mermaid
+flowchart LR
+    ts[Tailscale IP port 443] --> edge[edge-router<br/>L4 SNI]
+    edge -->|fritz.example.com| fnginx[fritz-nginx port 443]
 ```
 
 - Project: `/home/youruser/Projects/edge-router/`
@@ -402,12 +417,12 @@ Tailscale IP :443 → edge-router (L4 SNI)
 A single Let's Encrypt wildcard certificate (`*.example.com`) covers all services:
 - Issued via `certbot-dns-route53` (DNS-01 challenge against Route 53)
 - Auto-renewed by certbot timer
-- Renewal hook at `/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh` reloads both nginx containers
+- Renewal hook at `/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh` reloads the nginx container
 - Path: `/etc/letsencrypt/live/example.com/`
 
 ### Firewall (UFW)
 
-```
+```text
 Default: deny incoming, allow outgoing
 Rules:
   - 22/tcp (SSH)
@@ -424,14 +439,14 @@ Rules:
 
 | Schedule | Script | Purpose |
 |----------|--------|---------|
-| `*/5 * * * *` | `fritz-exporter.sh` | Fritz platform metrics → `fritz.prom` |
+| `*/5 * * * *` | `fritz-exporter.sh` | machina platform metrics → `fritz.prom` |
 | `* * * * *` | `agent-lifecycle.sh` | Agent lifecycle metrics → `agent-lifecycle.prom` |
 
 All scripts write to `/tmp/heartbeat-metrics/` for node-exporter's textfile collector.
 
 ### SSH Hardening
 
-```
+```text
 PasswordAuthentication no
 PermitRootLogin no
 MaxAuthTries 3

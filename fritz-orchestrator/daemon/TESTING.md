@@ -1,10 +1,13 @@
-# Testing Guide
+# machina Testing Guide
+
+Test-suite reference for the machina daemon. See the [orchestrator README](../README.md) for the daemon overview.
 
 ## Overview
 
 The daemon uses [Vitest](https://vitest.dev/) as its test framework. Tests are organized by module alongside their source files using the `*.test.ts` naming convention.
 
-**Stats:** 737 tests across 37 files, ~93% line coverage on testable modules.
+> [!NOTE]
+> 1,369 tests across 53 files. Coverage is enforced via Vitest thresholds (see [Coverage](#coverage) below).
 
 ## Quick Start
 

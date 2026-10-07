@@ -1,16 +1,14 @@
 # Pipeline Rules
 
-> **Purpose:** Documents the invariants and soft defaults fritZ uses when managing
-> the pipeline. These are enforced in autoloop code and by fritZ conversationally
-> when planning dependencies.
+Documents the invariants and soft defaults machina uses when managing the pipeline. These are enforced in autoloop code and by machina conversationally when planning dependencies.
 
----
+_Part of the machina [knowledge base](README.md) — read by every agent at boot._
 
 ## Invariants (enforced in autoloop code)
 
-- **fritz.depends-on blocks** — an issue with `fritz.depends-on:N` will not spawn until issue N
-  is closed. Autoloop checks this every cycle.
-- **agent-cap** — no more than `maxParallelAgents` active agents at once.
+> [!IMPORTANT]
+> - `fritz.depends-on:N` blocks — an issue with this label will not spawn until issue N is closed. Autoloop checks this every cycle.
+> - Agent cap — no more than `maxParallelAgents` active agents run at once.
 
 ## Invariants (enforced in agent skills)
 
@@ -26,9 +24,13 @@
   (defense-in-depth alongside daemon enforcement). Blocked issues report blocked status
   immediately rather than wasting work.
 
-## Soft Defaults (fritZ uses when planning conversationally)
+## Soft Defaults (machina uses when planning conversationally)
 
 - Higher priority issues should be chained/promoted before lower priority ones
 - When chaining issues, infer order from content — not just issue number
 - Issues without `fritz.repo:` target the default repo (`config.githubRepo`)
 - Multiple implement agents can run in parallel on the same repo — use `fritz.depends-on:` to serialize when needed
+
+---
+
+_See also: [LABELS.md](LABELS.md) (label and status reference), [ARCHITECTURE.md](ARCHITECTURE.md) (issue workflow), and the [root README](../../README.md)._

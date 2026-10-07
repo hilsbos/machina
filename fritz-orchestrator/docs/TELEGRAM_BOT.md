@@ -1,8 +1,10 @@
-# Telegram Bot - Orchestrator Integration
+# machina Telegram Bot
+
+Part of the [machina orchestrator](../README.md). For first-time bot creation and `.env` wiring, see [TELEGRAM_SETUP.md](TELEGRAM_SETUP.md).
 
 ## Overview
 
-The fritZ Telegram bot provides a mobile-friendly interface for managing the orchestrator and agents. All messages include rich metadata headers showing source, context, and timestamp.
+The machina Telegram bot provides a mobile-friendly interface for managing the orchestrator and agents. All messages include rich metadata headers showing source, context, and timestamp.
 
 ### Design Goals
 
@@ -31,7 +33,7 @@ The fritZ Telegram bot provides a mobile-friendly interface for managing the orc
 All orchestrator responses now include formatted headers:
 
 ### Orchestrator Messages
-```
+```text
 ┏━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃ ⚡ orchestrator       ┃
 ┃ session-3 • 14:25     ┃
@@ -41,7 +43,7 @@ All orchestrator responses now include formatted headers:
 ```
 
 ### Agent Messages
-```
+```text
 ┏━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃ 🔨 impl-7 • #42       ┃
 ┃ your-org/fritZ • 14:25 ┃
@@ -56,7 +58,7 @@ All orchestrator responses now include formatted headers:
 
 Use "fritz [message]" for natural conversation with the AI orchestrator:
 
-```
+```text
 fritz status
 fritz what's blocking issue #42?
 fritz plan notification system
@@ -71,22 +73,26 @@ fritz help me debug the auth system
 
 These commands work directly without AI routing:
 
-- `/boot <role> [issue] [repo] [--force]` - Start an agent (use `--force` to bypass parallel agent limit)
-- `/status` - Show all agents
-- `/stop <name>` - Stop an agent
-- `/logs <name>` - View agent logs
-- `/cleanup [hours]` - Remove old workspaces (default: configured `daemon.workspaceMaxAgeHours` in `fritz.yaml`, use `0` for all non-active)
+| Command | Effect |
+|---------|--------|
+| `/boot <role> [issue] [repo] [--force]` | Start an agent (use `--force` to bypass the parallel agent limit) |
+| `/status` | Show all agents |
+| `/stop <name>` | Stop an agent |
+| `/logs <name>` | View agent logs |
+| `/cleanup [hours]` | Remove old workspaces (default: configured `daemon.workspaceMaxAgeHours` in `fritz.yaml`, use `0` for all non-active) |
 
 ### Scheduler Commands
 
 Manage the periodic task scheduler via `fritz schedule`:
 
-- `fritz schedule` / `fritz schedule list` - List all scheduled jobs with status, next run, and last run info
-- `fritz schedule trigger <job-id>` - Manually trigger a scheduled job (creates GitHub issue immediately)
-- `fritz schedule enable <job-id>` - Enable a disabled job at runtime
-- `fritz schedule disable <job-id>` - Disable a job at runtime (persists across restarts)
+| Command | Effect |
+|---------|--------|
+| `fritz schedule` / `fritz schedule list` | List all scheduled jobs with status, next run, and last run info |
+| `fritz schedule trigger <job-id>` | Manually trigger a scheduled job (creates a GitHub issue immediately) |
+| `fritz schedule enable <job-id>` | Enable a disabled job at runtime |
+| `fritz schedule disable <job-id>` | Disable a job at runtime (persists across restarts) |
 
-Jobs are configured in `fritz.yaml` under the `scheduler` section. See [Issue #328](https://github.com/your-org/fritZ/issues/328) for the full technical specification.
+Jobs are configured in `fritz.yaml` under the `scheduler` section. See [Issue #328](https://github.com/hilsbos/machina/issues/328) for the full technical specification.
 
 ## Message Features
 
@@ -94,7 +100,7 @@ Jobs are configured in `fritz.yaml` under the `scheduler` section. See [Issue #3
 
 Long responses (>4096 chars) are automatically split at paragraph boundaries:
 
-```
+```text
 [First chunk]
 (1/3)
 
@@ -109,7 +115,7 @@ Long responses (>4096 chars) are automatically split at paragraph boundaries:
 
 The orchestrator maintains conversation context across messages:
 
-```
+```text
 You: fritz what's in the backlog?
 Bot: [Lists backlog items]
 
@@ -135,36 +141,32 @@ Timestamps show time for today, date + time for older messages:
 
 ### Message Flow
 
+Inbound messages are routed by prefix — `/` commands run directly, everything else goes to the AI orchestrator:
+
+```mermaid
+flowchart TD
+    msg[Telegram message] -->|starts with slash| direct[Direct handler<br/>no AI no metadata]
+    msg -->|starts with fritz| orch[orchestrator.send]
+    orch --> ai[AI response]
+    ai --> fmt[MessageFormatter<br/>adds rich headers]
 ```
-Telegram Message (user → daemon)
-    │
-    ├─── Starts with "/"
-    │    │
-    │    └─── /boot, /status, etc. → Direct handler (no AI, no metadata)
-    │
-    └─── Starts with "fritz"
-         │
-         └─── orchestrator.send() → AI response
 
-All orchestrator responses → MessageFormatter → Rich headers added
+Agent notifications fan out to Telegram and GitHub, and completion stops the container:
 
-Agent Notification (agent → daemon → Telegram + GitHub)
-    │
-    Agent calls report.sh → POST /api/notify {type, message}
-    │
-    ├─── touchAgent() → updates lastActivityAt (display only — TTL is wall-clock from start)
-    ├─── lifecycle.issueComment() → Telegram message
-    ├─── github.postComment() → GitHub issue comment
-    │
-    └─── type === "complete"?
-         ├─── Yes → stopAgent() → container removed, label transition
-         │         (active → for-review / for-validate / etc.)
-         └─── No  → done (progress/blocked/info are notification-only)
-
-User → Agent messages (/tell, reply) also call touchAgent() to refresh the
-"last activity" display. TTL itself is wall-clock from agent.started — activity
-does not extend it.
+```mermaid
+flowchart TD
+    report[Agent calls report.sh] --> notify[POST /api/notify]
+    notify --> touch[touchAgent<br/>updates lastActivityAt<br/>display only]
+    notify --> tg[Telegram message]
+    notify --> gh[GitHub issue comment]
+    notify -->|type complete| stop[stopAgent<br/>container removed<br/>label transition]
+    notify -->|progress blocked info| done[notification only]
 ```
+
+On completion the agent's label transitions (active → for-review / for-validate, etc.). User → agent messages (`/tell`, reply) also call `touchAgent()` to refresh the last-activity display.
+
+> [!NOTE]
+> `touchAgent()` only refreshes the last-activity display. TTL is wall-clock from agent start and does not reset on activity.
 
 ### Design Principles
 
@@ -186,7 +188,7 @@ No configuration changes needed. The bot automatically:
 
 ### Workflow Status
 
-```
+```text
 User: fritz status
 Bot:
 ┏━━━━━━━━━━━━━━━━━━━━━━━┓
@@ -205,7 +207,7 @@ Velocity: On track
 
 ### Agent Update
 
-```
+```text
 Agent:
 ┏━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃ 🔨 impl-7 • #42       ┃

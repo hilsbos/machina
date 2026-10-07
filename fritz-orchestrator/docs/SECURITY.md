@@ -1,44 +1,62 @@
-# Security Architecture
+# machina Security Architecture
+
+Security model for the machina deployment. See the [orchestrator hub](../README.md) for the big picture and [API.md](API.md) for endpoint-level auth.
+
+## Contents
+
+- [Overview](#overview)
+- [Secret management](#secret-management)
+- [How it works](#how-it-works)
+- [Authentication methods](#authentication-methods)
+- [File permissions](#file-permissions)
+- [Dashboard remote access security](#dashboard-remote-access-security)
+- [Deployment security checklist](#deployment-security-checklist)
+- [Secret rotation](#secret-rotation)
+- [Server security](#server-security)
+- [Advanced: secret managers](#advanced-secret-managers)
+- [Audit and monitoring](#audit--monitoring)
+- [Process security](#process-security)
+- [Threat model](#threat-model)
+- [Incident response](#incident-response)
+- [Questions](#questions)
 
 ## Overview
 
-fritZ follows security best practices by **never storing secrets in code or repositories**. All sensitive credentials are managed through environment variables and protected file permissions.
+machina follows security best practices by **never storing secrets in code or repositories**. All sensitive credentials are managed through environment variables and protected file permissions.
 
-## Secret Management
+## Secret management
 
-### What's Secret (Never in Git)
-- ❌ `ANTHROPIC_API_KEY` - Claude API key (if using API key instead of Claude Code)
-- ❌ `TELEGRAM_BOT_TOKEN` - Telegram bot authentication
-- ❌ `TELEGRAM_CHAT_ID` - Your Telegram chat ID
-- ❌ `GH_TOKEN` - GitHub personal access token
+### What's secret (never in git)
 
-### What's Safe to Commit
-- ✅ `.env.example` - Template file (no real values)
-- ✅ Source code - No hardcoded credentials
-- ✅ Configuration files - Reference env vars only
-- ✅ Documentation
+| Secret | Purpose |
+|--------|---------|
+| `ANTHROPIC_API_KEY` | Claude API key (if using API key instead of Claude Code) |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot authentication |
+| `TELEGRAM_CHAT_ID` | Your Telegram chat ID |
+| `GH_TOKEN` | GitHub personal access token |
 
-## How It Works
+### What's safe to commit
 
-```
-┌─────────────────┐
-│  Git Repository │  ← NO SECRETS HERE
-│  (Public/Safe)  │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Production      │  ← SECRETS HERE ONLY
-│ Server          │     (in .env file)
-│                 │
-│ Node.js reads   │
-│ from .env       │
-└─────────────────┘
+| Item | Why it's safe |
+|------|---------------|
+| `.env.example` | Template file (no real values) |
+| Source code | No hardcoded credentials |
+| Configuration files | Reference env vars only |
+| Documentation | Reference only |
+
+## How it works
+
+```mermaid
+flowchart LR
+    git[Git repository<br/>public and safe] -->|no secrets here| env
+    subgraph prod [Production server]
+        env[.env file<br/>secrets here only] --> node[Node.js reads from .env]
+    end
 ```
 
-## Authentication Methods
+## Authentication methods
 
-fritZ supports two authentication methods for Claude API:
+machina supports two authentication methods for Claude API:
 
 ### Method 1: Claude Code CLI (Recommended)
 - **Setup**: Run `claude setup-token` on server
@@ -83,10 +101,10 @@ HOST_CLAUDE_HOME=/home/fritz/.claude
 
 See [DOCKER.md](../DOCKER.md) for the full credential flow and volume mount architecture.
 
-## File Permissions
+## File permissions
 
 ### `.env` file (on server only)
-```bash
+```text
 -rw-------  1 fritz fritz  256 Jan 26 14:00 .env
 ```
 - Mode: `600` (only owner can read/write)
@@ -104,7 +122,7 @@ ls -la /opt/fritz/.env
 ```
 
 ### `.env.example` (template, safe to commit)
-```bash
+```text
 -rw-r--r--  1 user user  1024 Jan 26 14:00 .env.example
 ```
 - Contains placeholder values only
@@ -112,37 +130,39 @@ ls -la /opt/fritz/.env
 - Used as template for creating `.env`
 
 ### Claude Code directory (if using CLI auth)
-```bash
+```text
 -rwx------  1 user user  ~/.claude/
 ```
 - Contains OAuth tokens
 - Auto-managed by Claude Code CLI
 - Should not be copied between systems
 
-## Dashboard mTLS Security
+## Dashboard remote access security
 
-The dashboard supports optional remote access via mutual TLS (mTLS) through an nginx reverse proxy.
+The dashboard supports optional remote access through an nginx reverse proxy, reached over a private Tailscale network (your Tailscale edge router) rather than a public port.
 
-### What mTLS provides
-- **Server authentication** — browser verifies the server certificate
-- **Client authentication** — nginx verifies the client certificate (only holders of `client.p12` can connect)
+> [!CAUTION]
+> The network posture is a Let's Encrypt TLS server certificate + a Tailscale private network + an nginx path allowlist that returns 444 for everything else. There is **no** mutual TLS — the proxy authenticates the server to the browser, not individual users.
+
+### What the proxy provides
+- **Server authentication** — browser verifies the TLS server certificate
 - **Encryption** — TLS 1.3 only
-- **Path restriction** — only `/dashboard` and `/api/dashboard/*` are exposed; all other paths return 444
+- **Network isolation** — nginx publishes no host ports (`docker-compose.prod.yml`); it is reachable only through the Tailscale edge router
+- **Path restriction** — only `/dashboard`, `/api/dashboard/`, and `/system-map` are proxied; all other paths return 444
 
 ### Certificate management
-- Certificates are auto-generated by the `mtls-init` container on first boot
-- CA has a 10-year lifetime; server/client certs are 825 days (Apple's max)
-- To regenerate: delete `mtls/certs/` and restart the stack
-- Client `.p12` bundles should be securely distributed to authorized users only
+- A standard Let's Encrypt TLS server certificate is mounted read-only from the host's `/etc/letsencrypt` (see `nginx/nginx.conf`)
+- Renew it with your normal certbot workflow on the host; nginx serves the renewed files
 
 ### Security headers
 The nginx proxy adds: `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`.
 
 ### What is NOT protected
-- Dashboard on localhost (port 3456) has no authentication — this is intentional for local development
-- The mTLS proxy only secures remote access; local access is always open
 
-## Deployment Security Checklist
+> [!WARNING]
+> The dashboard on localhost (port 3456) has no authentication — this is intentional for local development. The proxy encrypts and restricts remote access but does not authenticate individual users; keep it bound to the private Tailscale network.
+
+## Deployment security checklist
 
 - [ ] Dedicated `fritz` service user created (not root)
 - [ ] `.env` file created at `/opt/fritz/.env` (not in git)
@@ -154,12 +174,11 @@ The nginx proxy adds: `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`
 - [ ] Per-agent `.claude` isolation verified (credentials copied, not shared)
 - [ ] `HOST_WORKSPACES_DIR` and `HOST_CLAUDE_HOME` set in `.env`
 - [ ] SSH access uses key-based authentication (not passwords)
-- [ ] Dashboard mTLS configured (if using remote access): `FRITZ_DOMAIN`, `FRITZ_DASHBOARD_PORT`, `FRITZ_CLIENT_CERT_PASS`
-- [ ] `client.p12` distributed securely to authorized users only
-- [ ] Server firewall configured (ufw or equivalent, allow dashboard port if using mTLS)
+- [ ] Dashboard remote access configured (if used): `FRITZ_DOMAIN` set, TLS certificate present under `/etc/letsencrypt`, proxy bound to the private Tailscale network
+- [ ] Server firewall configured (ufw or equivalent)
 - [ ] Regular security updates enabled
 
-## Secret Rotation
+## Secret rotation
 
 If a secret is compromised:
 
@@ -211,7 +230,7 @@ nano /opt/fritz/.env
 cd /opt/fritz && docker compose restart
 ```
 
-## Server Security
+## Server security
 
 ### SSH Hardening
 
@@ -264,20 +283,9 @@ sudo dpkg-reconfigure --priority=low unattended-upgrades
 sudo systemctl status unattended-upgrades
 ```
 
-## Advanced: Secret Managers
+## Advanced: secret managers
 
 For production deployments, consider using a secret manager:
-
-### Scaleway Secret Manager
-```bash
-# Create secrets
-scw secret create name=fritz-telegram-token secret-value=$TELEGRAM_BOT_TOKEN
-scw secret create name=fritz-gh-token secret-value=$GH_TOKEN
-
-# Fetch at startup (add to startup script)
-export TELEGRAM_BOT_TOKEN=$(scw secret version access secret-name=fritz-telegram-token)
-export GH_TOKEN=$(scw secret version access secret-name=fritz-gh-token)
-```
 
 ### HashiCorp Vault
 ```bash
@@ -304,7 +312,7 @@ aws secretsmanager get-secret-value \
   --output text
 ```
 
-## Audit & Monitoring
+## Audit & monitoring
 
 ### Check for Secret Leaks
 
@@ -343,7 +351,7 @@ docker compose -f /opt/fritz/docker-compose.yml logs -f
 # Ensure no sensitive data logged
 ```
 
-## Process Security
+## Process security
 
 ### Service User
 
@@ -376,23 +384,27 @@ docker ps --filter "name=fritz-"
 docker exec fritz-daemon whoami
 ```
 
-## Threat Model
+## Threat model
 
-### What This Protects Against
-- ✅ Accidental git commits of secrets
-- ✅ Source code disclosure (no hardcoded keys)
-- ✅ Public repository cloning (secrets not included)
-- ✅ Unauthorized local access (file permissions)
+### What this protects against
+- Accidental git commits of secrets
+- Source code disclosure (no hardcoded keys)
+- Public repository cloning (secrets not included)
+- Unauthorized local access (file permissions)
 
-### What You Must Still Protect
-- ⚠️ Server SSH access (use key-based auth)
-- ⚠️ `.env` file on disk (use `chmod 600`)
-- ⚠️ Process environment (visible to root and process owner)
-- ⚠️ Log files (ensure no secrets logged)
-- ⚠️ Backup files (may contain `.env`, protect them)
-- ⚠️ Memory dumps (may contain secrets in RAM)
+### What you must still protect
 
-## Incident Response
+> [!WARNING]
+> These are outside the scope of the secret-management model and remain your responsibility.
+
+- Server SSH access (use key-based auth)
+- `.env` file on disk (use `chmod 600`)
+- Process environment (visible to root and process owner)
+- Log files (ensure no secrets logged)
+- Backup files (may contain `.env`, protect them)
+- Memory dumps (may contain secrets in RAM)
+
+## Incident response
 
 If you suspect a secret has been compromised:
 
@@ -439,4 +451,5 @@ gpg -c .env  # Creates .env.gpg
 
 ---
 
-**Remember:** Secrets belong in the environment, never in code or repositories!
+> [!IMPORTANT]
+> Secrets belong in the environment, never in code or repositories.
